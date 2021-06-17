@@ -5,6 +5,10 @@ import json
 class DebuggerSerialConnection:
     _CONNECTION_HANDSHAKE = f"josx"
 
+    TRACE = 0
+    KERNEL_INFO = 1
+    INT3 = 2
+
     def __init__(self):
         self._name = None
         self._kernel_info = None

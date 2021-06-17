@@ -1,11 +1,12 @@
-import sys
-import time
+import base64
 import json
 import pefile
+
 # NOTE: https://stackoverflow.com/questions/21048073/install-python-package-from-github-using-pycharm
 import pdbparse
 import josKDbg
 
+from struct import unpack
 
 class YmlPdbLoader:
     """load and parse a PDB file in YML format created by LLVM"""
@@ -121,27 +122,30 @@ class KernelLogAnalyser:
             line = self._kernel_log_file.readline()
 
 
+
 dbg_pipe_name = r'\\.\pipe\josxDbg'
 
 
 def test_connection():
     conn = josKDbg.debugger_serial_connection_factory()
     conn.connect(dbg_pipe_name)
-    print('connected: ' + str(conn.kernel_connection_info()))
+    print('>connected: ' + str(conn.kernel_connection_info()))
     # print out kernel trace messages until the VM shuts down
     try:
         packet_id, packet_len, packet = conn.read_one_packet_block()
         while packet_len != 0:
-            if packet_id == 0:
+            if packet_id == conn.TRACE:
                 payload_as_string = packet.decode("utf-8")
                 print(payload_as_string)
-            else:
-                print(f'got packet {hex(packet_id)}')
+            elif packet_id == conn.INT3:
+                payload_as_string = packet.decode("utf-8")
+                json_packet = json.loads(payload_as_string)
+                decodedBytes = base64.b64decode(json_packet['stackframe'])
+                stackframe = josKDbg.InterruptStackFrame(decodedBytes)
+                print(f'>breakpoint @ {hex(stackframe.cs)}:{hex(stackframe.rip)}')
             packet_id, packet_len, packet = conn.read_one_packet_block()
-    except:
-        pass
     finally:
-        print("debugger disconnecting")
+        print(">debugger disconnecting")
 
 
 def test_pe_load():
