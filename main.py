@@ -130,6 +130,7 @@ def test_connection():
     conn = josKDbg.debugger_serial_connection_factory()
     conn.connect(dbg_pipe_name)
     print('>connected: ' + str(conn.kernel_connection_info()))
+    image_info = conn.kernel_connection_info()['image_info']
     # print out kernel trace messages until the VM shuts down
     try:
         packet_id, packet_len, packet = conn.read_one_packet_block()
@@ -143,6 +144,12 @@ def test_connection():
                 decodedBytes = base64.b64decode(json_packet['stackframe'])
                 stackframe = josKDbg.InterruptStackFrame(decodedBytes)
                 print(f'>breakpoint @ {hex(stackframe.cs)}:{hex(stackframe.rip)}')
+                from pdbparse.symlookup import Lookup
+                lookup_info = [(r'BOOTX64.PDB', image_info['base'])]
+                lobj = Lookup(lookup_info)
+                # strictly the address of the int3 instruction itself
+                lookup = lobj.lookup(stackframe.rip - 1)
+                print(lookup)
             packet_id, packet_len, packet = conn.read_one_packet_block()
     finally:
         print(">debugger disconnecting")
@@ -155,10 +162,13 @@ def test_pe_load():
 
 
 def test_pdb_load():
-    pdb = pdbparse.parse(r'BOOTX64.PDB', fast_load=True)
-    print(pdb)
+    from pdbparse.symlookup import Lookup
+    lookup_info = [(r'BOOTX64.PDB', 2178084865)]
+    lobj = Lookup(lookup_info)
+    lookup = lobj.lookup(0x81d31080)
+    print(lookup)
 
 
 if __name__ == '__main__':
-    # test_pdb_load()
+    test_pdb_load()
     test_connection()

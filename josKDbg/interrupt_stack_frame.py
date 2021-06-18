@@ -37,3 +37,10 @@ class InterruptStackFrame(ctypes.LittleEndianStructure):
 
     def __init__(self, sb=None):
         pass
+
+    def dump(self):
+        print(f'rax {hex(self.rax)}\trbx {hex(self.rbx)}\trcx {hex(self.rcx)}\trdx {hex(self.rdx)}')
+        print(f'rsi {hex(self.rsi)}\trdi {hex(self.rdi)}')
+        print(f'r8 {hex(self.r8)}\tr9 {hex(self.r9)}\tr10 {hex(self.r10)}\tr11 {hex(self.r11)}')
+        print(f'r12 {hex(self.r12)}\tr13 {hex(self.r13)}\tr14 {hex(self.r14)}')
+        print(f'rip {hex(self.rip)}\trsp {hex(self.rsp)}\trflags {hex(self.rflags)}')
