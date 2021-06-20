@@ -8,6 +8,7 @@ import josKDbg
 
 from struct import unpack
 
+
 class YmlPdbLoader:
     """load and parse a PDB file in YML format created by LLVM"""
 
@@ -122,7 +123,6 @@ class KernelLogAnalyser:
             line = self._kernel_log_file.readline()
 
 
-
 dbg_pipe_name = r'\\.\pipe\josxDbg'
 
 
@@ -134,8 +134,10 @@ def test_connection():
     # print out kernel trace messages until the VM shuts down
     try:
         packet_id, packet_len, packet = conn.read_one_packet_block()
-        while packet_len != 0:
-            if packet_id == conn.TRACE:
+        while True:
+            if packet_id == conn.READ_TARGET_MEMORY_RESP:
+                pass
+            elif packet_id == conn.TRACE:
                 payload_as_string = packet.decode("utf-8")
                 print(payload_as_string)
             elif packet_id == conn.INT3:
@@ -150,6 +152,9 @@ def test_connection():
                 # strictly the address of the int3 instruction itself
                 lookup = lobj.lookup(stackframe.rip - 1)
                 print(lookup)
+                # tell the kernel to continue execution
+                conn.send_packet(conn.CONTINUE, 0, None)
+            # read the next packet
             packet_id, packet_len, packet = conn.read_one_packet_block()
     finally:
         print(">debugger disconnecting")
@@ -162,13 +167,24 @@ def test_pe_load():
 
 
 def test_pdb_load():
-    from pdbparse.symlookup import Lookup
-    lookup_info = [(r'BOOTX64.PDB', 2178084865)]
-    lobj = Lookup(lookup_info)
-    lookup = lobj.lookup(0x81d31080)
-    print(lookup)
+    try:
+        pdb = pdbparse.parse(r'BOOTX64.PDB', fast_load=True)
+        pdb.STREAM_DBI.load()
+        pdb._update_names()
+        pdb.STREAM_GSYM = pdb.STREAM_GSYM.reload()
+        if pdb.STREAM_GSYM.size:
+            pdb.STREAM_GSYM.load()
+        pdb.STREAM_SECT_HDR = pdb.STREAM_SECT_HDR.reload()
+        pdb.STREAM_SECT_HDR.load()
+        # These are the dicey ones
+        pdb.STREAM_OMAP_FROM_SRC = pdb.STREAM_OMAP_FROM_SRC.reload()
+        pdb.STREAM_OMAP_FROM_SRC.load()
+        pdb.STREAM_SECT_HDR_ORIG = pdb.STREAM_SECT_HDR_ORIG.reload()
+        pdb.STREAM_SECT_HDR_ORIG.load()
+    except AttributeError as e:
+        pass
 
 
 if __name__ == '__main__':
-    test_pdb_load()
+    #test_pdb_load()
     test_connection()

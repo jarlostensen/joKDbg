@@ -1,13 +1,33 @@
 import sys
 import json
+import ctypes
+
+
+class DebuggerSerialPacket(ctypes.LittleEndianStructure):
+    _pack = 1
+    _fields_ = [
+        ('_id', ctypes.c_uint32),
+        ('_length', ctypes.c_uint32)
+    ]
+
+
+def _create_debugger_packet(packet_id, packet_length):
+    packet = DebuggerSerialPacket()
+    packet._id = packet_id
+    packet._length = packet_length
+    return ctypes.cast(ctypes.byref(packet), ctypes.POINTER(ctypes.c_char * ctypes.sizeof(packet)))
 
 
 class DebuggerSerialConnection:
     _CONNECTION_HANDSHAKE = f"josx"
 
-    TRACE = 0
-    KERNEL_INFO = 1
-    INT3 = 2
+    CONTINUE = 0
+    TRACE = 1
+    KERNEL_INFO = 2
+    INT3 = 3
+    READ_TARGET_MEMORY = 4
+    READ_TARGET_MEMORY_RESP = 5
+    WRITE_TARGET_MEMORY = 6
 
     def __init__(self):
         self._name = None
