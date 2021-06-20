@@ -3,7 +3,7 @@ import ctypes
 
 class InterruptStackFrame(ctypes.LittleEndianStructure):
     """this reflects the layout of interrupt_stack_t in the kernel interrupts.c file"""
-    _pack = 1
+    _pack_ = 1
     _fields_ = [
         ("rdi", ctypes.c_uint64),
         ("rsi", ctypes.c_uint64),

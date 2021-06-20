@@ -1,5 +1,5 @@
 import win32pipe, win32file
-from .debugger_serial_connection import DebuggerSerialConnection, DebuggerSerialPacket, _create_debugger_packet
+from .debugger_serial_connection import DebuggerSerialConnection, DebuggerSerialPacket
 from struct import unpack
 
 
@@ -56,11 +56,8 @@ class DebuggerSerialConnectionWin32(DebuggerSerialConnection):
                     buffer += data
                     total_read += len(data)
         # whatever is in excess we store for the next round
-        self._buffer = buffer[packet_length+8:]
+        self._buffer = buffer[packet_length + 8:]
         return packet_id, packet_length, buffer[8:]
 
-    def send_packet(self, packet_id, packet_length, data):
-        packet_header = _create_debugger_packet(packet_id, packet_length)
-        win32file.WriteFile(self._pipe, packet_header.contents.raw)
-        if packet_length > 0:
-            win32file.WriteFile(self._pipe, data)
+    def _send_packet_impl(self, raw_data):
+        win32file.WriteFile(self._pipe, raw_data)

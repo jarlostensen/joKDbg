@@ -6,7 +6,8 @@ import pefile
 import pdbparse
 import josKDbg
 
-from struct import unpack
+# disassembler https://pypi.org/project/iced-x86/
+import iced_x86
 
 
 class YmlPdbLoader:
@@ -123,21 +124,32 @@ class KernelLogAnalyser:
             line = self._kernel_log_file.readline()
 
 
+def disassemble_bytes(bytes, at):
+    decoder = iced_x86.Decoder(64, bytes, ip=at)
+    formatter = iced_x86.Formatter(iced_x86.FormatterSyntax.NASM)
+    for instr in decoder:
+        disasm = formatter.format(instr)
+        start_index = instr.ip - at
+        bytes_str = bytes[start_index:start_index + instr.len].hex().upper()
+        print(f"{instr.ip:016X} {bytes_str:20} {disasm}")
+
+
 dbg_pipe_name = r'\\.\pipe\josxDbg'
 
 
-def test_connection():
+def test_debugger_loop():
     conn = josKDbg.debugger_serial_connection_factory()
     conn.connect(dbg_pipe_name)
     print('>connected: ' + str(conn.kernel_connection_info()))
     image_info = conn.kernel_connection_info()['image_info']
-    # print out kernel trace messages until the VM shuts down
+
+    last_bp_rip = 0
+
+    # the basic debugger loop
     try:
         packet_id, packet_len, packet = conn.read_one_packet_block()
         while True:
-            if packet_id == conn.READ_TARGET_MEMORY_RESP:
-                pass
-            elif packet_id == conn.TRACE:
+            if packet_id == conn.TRACE:
                 payload_as_string = packet.decode("utf-8")
                 print(payload_as_string)
             elif packet_id == conn.INT3:
@@ -145,15 +157,20 @@ def test_connection():
                 json_packet = json.loads(payload_as_string)
                 decodedBytes = base64.b64decode(json_packet['stackframe'])
                 stackframe = josKDbg.InterruptStackFrame(decodedBytes)
+                last_bp_rip = stackframe.rip
                 print(f'>breakpoint @ {hex(stackframe.cs)}:{hex(stackframe.rip)}')
                 from pdbparse.symlookup import Lookup
                 lookup_info = [(r'BOOTX64.PDB', image_info['base'])]
                 lobj = Lookup(lookup_info)
-                # strictly the address of the int3 instruction itself
-                lookup = lobj.lookup(stackframe.rip - 1)
-                print(lookup)
+                lookup = lobj.lookup(stackframe.rip)
+                print(f'>{lookup}')
+                # ask the kernel for the next couple of bytes of instructions
+                conn.send_kernel_read_target_memory(stackframe.rip, 64)
                 # tell the kernel to continue execution
-                conn.send_packet(conn.CONTINUE, 0, None)
+                conn.send_kernel_continue()
+            elif packet_id == conn.READ_TARGET_MEMORY_RESP:
+                # response from last int3 is a bunch of instruction bytes
+                disassemble_bytes(packet, last_bp_rip)
             # read the next packet
             packet_id, packet_len, packet = conn.read_one_packet_block()
     finally:
@@ -187,4 +204,4 @@ def test_pdb_load():
 
 if __name__ == '__main__':
     #test_pdb_load()
-    test_connection()
+    test_debugger_loop()
