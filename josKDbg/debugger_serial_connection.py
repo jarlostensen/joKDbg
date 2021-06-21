@@ -63,7 +63,7 @@ class DebuggerSerialConnection:
                                            ctypes.POINTER(ctypes.c_char * ctypes.sizeof(rt_packet))).contents.raw)
 
 
-def debugger_serial_connection_factory():
+def debugger_serial_pipe_connection_factory():
     if sys.platform == 'win32':
         from .debugger_serial_connection_win32 import DebuggerSerialConnectionWin32
         return DebuggerSerialConnectionWin32()

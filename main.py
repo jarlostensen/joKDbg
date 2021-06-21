@@ -124,57 +124,36 @@ class KernelLogAnalyser:
             line = self._kernel_log_file.readline()
 
 
-def disassemble_bytes(bytes, at):
-    decoder = iced_x86.Decoder(64, bytes, ip=at)
-    formatter = iced_x86.Formatter(iced_x86.FormatterSyntax.NASM)
-    for instr in decoder:
-        disasm = formatter.format(instr)
-        start_index = instr.ip - at
-        bytes_str = bytes[start_index:start_index + instr.len].hex().upper()
-        print(f"{instr.ip:016X} {bytes_str:20} {disasm}")
+def test_debugger():
+    class MyDebugger(josKDbg.Debugger):
+        def __init__(self):
+            super().__init__()
 
+        def _disassemble_bytes_impl(self, bytes, at):
+            decoder = iced_x86.Decoder(64, bytes, ip=at)
+            formatter = iced_x86.Formatter(iced_x86.FormatterSyntax.NASM)
+            for instr in decoder:
+                disasm = formatter.format(instr)
+                start_index = instr.ip - at
+                bytes_str = bytes[start_index:start_index + instr.len].hex().upper()
+                print(f"{instr.ip:016X} {bytes_str:30} {disasm}")
 
-dbg_pipe_name = r'\\.\pipe\josxDbg'
+        def _on_connect_impl(self, kernel_info_json):
+            print('>connected: ' + str(kernel_info_json))
 
+        def _on_bp(self, at, bp_packet):
+            print(f'>breakpoint @ {hex(at)}')
+            print(f'rax {bp_packet.stack.rax:016x} rbx {bp_packet.stack.rbx:016x} rcx {bp_packet.stack.rcx:016x} rdx {bp_packet.stack.rdx:016x}')
+            print(
+                f'rsi {bp_packet.stack.rsi:016x} rdi {bp_packet.stack.rdi:016x} rsp {bp_packet.stack.rsp:016x} rbp {bp_packet.stack.rbp:016x}')
+            print(
+                f'r8  {bp_packet.stack.r8:016x} r9 {bp_packet.stack.r9:016x} r10 {bp_packet.stack.r10:016x} r11 {bp_packet.stack.r11:016x}')
+            print(
+                f'r12 {bp_packet.stack.r12:016x} r13 {bp_packet.stack.r13:016x} r14 {bp_packet.stack.r14:016x} r15 {bp_packet.stack.r15:016x}')
 
-def test_debugger_loop():
-    conn = josKDbg.debugger_serial_connection_factory()
-    conn.connect(dbg_pipe_name)
-    print('>connected: ' + str(conn.kernel_connection_info()))
-    image_info = conn.kernel_connection_info()['image_info']
-
-    last_bp_rip = 0
-
-    # the basic debugger loop
-    try:
-        packet_id, packet_len, packet = conn.read_one_packet_block()
-        while True:
-            if packet_id == conn.TRACE:
-                payload_as_string = packet.decode("utf-8")
-                print(payload_as_string)
-            elif packet_id == conn.INT3:
-                payload_as_string = packet.decode("utf-8")
-                json_packet = json.loads(payload_as_string)
-                decodedBytes = base64.b64decode(json_packet['stackframe'])
-                stackframe = josKDbg.InterruptStackFrame(decodedBytes)
-                last_bp_rip = stackframe.rip
-                print(f'>breakpoint @ {hex(stackframe.cs)}:{hex(stackframe.rip)}')
-                from pdbparse.symlookup import Lookup
-                lookup_info = [(r'BOOTX64.PDB', image_info['base'])]
-                lobj = Lookup(lookup_info)
-                lookup = lobj.lookup(stackframe.rip)
-                print(f'>{lookup}')
-                # ask the kernel for the next couple of bytes of instructions
-                conn.send_kernel_read_target_memory(stackframe.rip, 64)
-                # tell the kernel to continue execution
-                conn.send_kernel_continue()
-            elif packet_id == conn.READ_TARGET_MEMORY_RESP:
-                # response from last int3 is a bunch of instruction bytes
-                disassemble_bytes(packet, last_bp_rip)
-            # read the next packet
-            packet_id, packet_len, packet = conn.read_one_packet_block()
-    finally:
-        print(">debugger disconnecting")
+    debugger = MyDebugger()
+    debugger.pipe_connect(r'\\.\pipe\josxDbg')
+    debugger.main_loop()
 
 
 def test_pe_load():
@@ -203,5 +182,7 @@ def test_pdb_load():
 
 
 if __name__ == '__main__':
-    #test_pdb_load()
-    test_debugger_loop()
+    # test_pdb_load()
+    # test_debugger_loop()
+    test_debugger()
+
