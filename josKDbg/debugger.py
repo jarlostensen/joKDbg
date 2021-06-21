@@ -1,7 +1,6 @@
 from .debugger_serial_connection import debugger_serial_pipe_connection_factory
 from .debugger_bp_packet import DebuggerBpPacket
 
-
 class Debugger:
     def __init__(self):
         self._conn = None
@@ -24,11 +23,6 @@ class Debugger:
                     bp_packet = DebuggerBpPacket.from_buffer_copy(packet)
                     last_bp_rip = bp_packet.stack.rip
                     self._on_bp(last_bp_rip, bp_packet)
-                    #from pdbparse.symlookup import Lookup
-                    #lookup_info = [(r'BOOTX64.PDB', image_info['base'])]
-                    #lobj = Lookup(lookup_info)
-                    #lookup = lobj.lookup(stackframe.rip)
-                    #print(f'>{lookup}')
                     # ask the kernel for the next couple of bytes of instructions
                     self._conn.send_kernel_read_target_memory(last_bp_rip, 64)
                     # tell the kernel to continue execution

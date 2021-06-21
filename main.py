@@ -127,6 +127,7 @@ class KernelLogAnalyser:
 def test_debugger():
     class MyDebugger(josKDbg.Debugger):
         def __init__(self):
+            self._pdb_lookup_info = None
             super().__init__()
 
         def _disassemble_bytes_impl(self, bytes, at):
@@ -140,9 +141,17 @@ def test_debugger():
 
         def _on_connect_impl(self, kernel_info_json):
             print('>connected: ' + str(kernel_info_json))
+            image_info = kernel_info_json['image_info']
+            from pdbparse.symlookup import Lookup
+            self._pdb_lookup_info = [(r'BOOTX64.PDB', image_info['base'])]
 
         def _on_bp(self, at, bp_packet):
+            print()
             print(f'>breakpoint @ {hex(at)}')
+            from pdbparse.symlookup import Lookup
+            lobj = Lookup(self._pdb_lookup_info)
+            lookup = lobj.lookup(bp_packet.stack.rip)
+            print(f'>break in code @ {lookup}')
             print(f'rax {bp_packet.stack.rax:016x} rbx {bp_packet.stack.rbx:016x} rcx {bp_packet.stack.rcx:016x} rdx {bp_packet.stack.rdx:016x}')
             print(
                 f'rsi {bp_packet.stack.rsi:016x} rdi {bp_packet.stack.rdi:016x} rsp {bp_packet.stack.rsp:016x} rbp {bp_packet.stack.rbp:016x}')
@@ -150,10 +159,14 @@ def test_debugger():
                 f'r8  {bp_packet.stack.r8:016x} r9 {bp_packet.stack.r9:016x} r10 {bp_packet.stack.r10:016x} r11 {bp_packet.stack.r11:016x}')
             print(
                 f'r12 {bp_packet.stack.r12:016x} r13 {bp_packet.stack.r13:016x} r14 {bp_packet.stack.r14:016x} r15 {bp_packet.stack.r15:016x}')
+            print()
 
     debugger = MyDebugger()
     debugger.pipe_connect(r'\\.\pipe\josxDbg')
-    debugger.main_loop()
+    try:
+        debugger.main_loop()
+    finally:
+        print('\n>debugger exiting')
 
 
 def test_pe_load():
