@@ -149,14 +149,13 @@ def test_debugger():
             from pdbparse.symlookup import Lookup
             self._pdb_lookup_info = [(r'BOOTX64.PDB', image_info['base'])]
 
-        def _on_bp_impl(self, at, bp_packet):
-            print()
-            print(f'>breakpoint @ {hex(at)}')
+        def _dump_bp_info(self, bp_packet):
             from pdbparse.symlookup import Lookup
             lobj = Lookup(self._pdb_lookup_info)
             lookup = lobj.lookup(bp_packet.stack.rip)
             print(f'>break in code @ {lookup}')
-            print(f'rax {bp_packet.stack.rax:016x} rbx {bp_packet.stack.rbx:016x} rcx {bp_packet.stack.rcx:016x} rdx {bp_packet.stack.rdx:016x}')
+            print(
+                f'rax {bp_packet.stack.rax:016x} rbx {bp_packet.stack.rbx:016x} rcx {bp_packet.stack.rcx:016x} rdx {bp_packet.stack.rdx:016x}')
             print(
                 f'rsi {bp_packet.stack.rsi:016x} rdi {bp_packet.stack.rdi:016x} rsp {bp_packet.stack.rsp:016x} rbp {bp_packet.stack.rbp:016x}')
             print(
@@ -164,6 +163,16 @@ def test_debugger():
             print(
                 f'r12 {bp_packet.stack.r12:016x} r13 {bp_packet.stack.r13:016x} r14 {bp_packet.stack.r14:016x} r15 {bp_packet.stack.r15:016x}')
             print()
+
+        def _on_bp_impl(self, at, bp_packet):
+            print()
+            print(f'>breakpoint @ {hex(at)}')
+            self._dump_bp_info(bp_packet)
+
+        def _on_gpf_impl(self, at, bp_packet):
+            print()
+            print(f'>#GPF @ {hex(at)}!!!!')
+            self._dump_bp_info(bp_packet)
 
     debugger = MyDebugger()
     debugger.pipe_connect(r'\\.\pipe\josxDbg')

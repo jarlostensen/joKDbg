@@ -29,6 +29,7 @@ class DebuggerSerialConnection:
     READ_TARGET_MEMORY = 4
     READ_TARGET_MEMORY_RESP = 5
     WRITE_TARGET_MEMORY = 6
+    GPF = 7
 
     def __init__(self):
         self._name = None
