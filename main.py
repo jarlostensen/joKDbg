@@ -1,3 +1,7 @@
+"""
+This is a sandbox of experimental code to use and refine the josKDbg Debugger module
+"""
+
 import base64
 import json
 import pefile

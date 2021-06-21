@@ -115,9 +115,9 @@ void debugger_wait_for_connection(peutil_pe_context_t* pe_ctx, uint64_t image_ba
     json_writer_context_t ctx;
     json_initialise_writer(&ctx, &stream);
 
-    # the document below contains information required and/or helpful to the debugger,
-    # such as the base address of the loaded PE kernel image (for PDB lookups)
-    # and some system stats (number of CPUs, kernel HEAP size)   
+    // the document below contains information required and/or helpful to the debugger,
+    // such as the base address of the loaded PE kernel image (for PDB lookups)
+    // and some system stats (number of CPUs, kernel HEAP size)   
     json_write_object_start(&ctx);
         json_write_key(&ctx, "version");
             json_write_object_start(&ctx);
@@ -156,9 +156,15 @@ I have written a *very* lightweight JSON library which uses my own `libc` FILE s
 For reference; this is an example of a typical JSON document returned by the kernel: 
 ``` json
 {
-'version': {'major': 0, 'minor': 1, 'patch': 0}, 
-'image_info': {'base': 2178084864, 'entry_point': 2178092768}, 
-'system_info': {'processors': 3, 'memory': 30740480}
+  "version": {
+    "major": 0, "minor": 1, "patch": 0
+  }, 
+  "image_info": {
+     "base": 2178084864, "entry_point": 2178092768
+  }, 
+ "system_info": {
+    "processors": 3, "memory": 30740480
+  }
 }
 ```
 
@@ -231,7 +237,7 @@ As an example; this is the handler for disassembling the instructions after the 
             print(f"{instr.ip:016X} {bytes_str:30} {disasm}")
 ```
 
-An example run of the kernel connecting and triggering a breakpoint now produces output like this: 
+Finally; here is output from an example run of the kernel connecting and triggering a breakpoint: 
 
 ```
 >connected: 
@@ -264,20 +270,23 @@ r12 0000000082713f18 r13 0000000083237790 r14 0000000081d3bc80 r15 0000000081d39
 [26:debugger] continuing execution
 
 ```
-As you can see we've got a JSON document with information about the system, version, image base, entry point, etc. followed by a breakpoint being in the kernel. 
+As you can see we've got a JSON document with information about the system, version, image base, entry point, etc. followed by a breakpoint hit in the kernel. 
 (In this case all I did was to insert a brute force `int 3` instruction in the code).\
 On the debugger side you can see parts of the register file at the point of the interrupt, and disassembly of some of the instructions following it.
 Lastly the kernel reports that it "continues execution" in response to a command sent from the debugger.
 
 There are a couple of nice pieces of functionality already being demonstrated here: 
 
-1. We can lookup the breakpoint address in the PDB and display some information about it. 
+1. We can lookup the breakpoint address in the PDB and display basic information about it. 
 2. We package machine state (registers) and sent them to the debugger for inspection.
 3. The debugger can request to read a block of memory from the kernel which is sent back and disassembled.
 
 It's far from a complete debugger, but the foundations are in place, and you can see how it is now possible to start building more advanced functionality.
-The next step is single stepping (pun intended) and dynamically setting breakpoints in the code. This will require a little more work on the kernel side and some basic user input handling on the debugger side.
+The next step is single stepping (pun intended) and dynamically setting breakpoints in the code. This will require a little more work on the kernel side, and some basic user input handling on the debugger side.
 That will be the topic of the next post in this series.
 
 Happy Coding.
 
+# Footnotes
+This article refers to code in the https://github.com/jarlostensen/joKDbg and https://github.com/jarlostensen/josx64 repos. 
+The code in those repos is evolving and should be considered a "Work In Progress"...
