@@ -145,7 +145,7 @@ def test_debugger():
             from pdbparse.symlookup import Lookup
             self._pdb_lookup_info = [(r'BOOTX64.PDB', image_info['base'])]
 
-        def _on_bp(self, at, bp_packet):
+        def _on_bp_impl(self, at, bp_packet):
             print()
             print(f'>breakpoint @ {hex(at)}')
             from pdbparse.symlookup import Lookup

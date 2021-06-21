@@ -22,7 +22,7 @@ class Debugger:
                 elif packet_id == self._conn.INT3:
                     bp_packet = DebuggerBpPacket.from_buffer_copy(packet)
                     last_bp_rip = bp_packet.stack.rip
-                    self._on_bp(last_bp_rip, bp_packet)
+                    self._on_bp_impl(last_bp_rip, bp_packet)
                     # ask the kernel for the next couple of bytes of instructions
                     self._conn.send_kernel_read_target_memory(last_bp_rip, 64)
                     # tell the kernel to continue execution
