@@ -2,8 +2,6 @@
 This is a sandbox of experimental code to use and refine the josKDbg Debugger module
 """
 
-import base64
-import json
 import pefile
 
 # NOTE: https://stackoverflow.com/questions/21048073/install-python-package-from-github-using-pycharm
@@ -13,6 +11,7 @@ import josKDbg
 # disassembler https://pypi.org/project/iced-x86/
 import iced_x86
 
+import queue
 
 class YmlPdbLoader:
     """load and parse a PDB file in YML format created by LLVM"""
@@ -162,6 +161,8 @@ def test_debugger():
                 f'r8  {bp_packet.stack.r8:016x} r9 {bp_packet.stack.r9:016x} r10 {bp_packet.stack.r10:016x} r11 {bp_packet.stack.r11:016x}')
             print(
                 f'r12 {bp_packet.stack.r12:016x} r13 {bp_packet.stack.r13:016x} r14 {bp_packet.stack.r14:016x} r15 {bp_packet.stack.r15:016x}')
+            print(
+                f'rflags {bp_packet.stack.rflags:08x} cs {bp_packet.stack.cs:02x} ss {bp_packet.stack.ss:02x}')
             print()
 
         def _on_bp_impl(self, at, bp_packet):
@@ -173,6 +174,11 @@ def test_debugger():
             print()
             print(f'>#GPF @ {hex(at)}!!!!')
             self._dump_bp_info(bp_packet)
+
+        def _process_trace_queue_impl(self, trace_queue: queue.Queue):
+            while not trace_queue.empty():
+                print(trace_queue.get_nowait())
+            trace_queue.task_done()
 
     debugger = MyDebugger()
     debugger.pipe_connect(r'\\.\pipe\josxDbg')

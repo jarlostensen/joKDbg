@@ -44,3 +44,43 @@ class InterruptStackFrame(ctypes.LittleEndianStructure):
         print(f'r8 {hex(self.r8)}\tr9 {hex(self.r9)}\tr10 {hex(self.r10)}\tr11 {hex(self.r11)}')
         print(f'r12 {hex(self.r12)}\tr13 {hex(self.r13)}\tr14 {hex(self.r14)}')
         print(f'rip {hex(self.rip)}\trsp {hex(self.rsp)}\trflags {hex(self.rflags)}')
+
+
+class DebuggerBpPacket(ctypes.LittleEndianStructure):
+    _pack_ = 1
+    _fields_ = [
+        ('stack', InterruptStackFrame),
+    ]
+
+
+class DebuggerSerialPacket(ctypes.LittleEndianStructure):
+    _pack_ = 1
+    _fields_ = [
+        ('_id', ctypes.c_uint32),
+        ('_length', ctypes.c_uint32)
+    ]
+
+
+class DebuggerReadTargetMemoryPacket(ctypes.LittleEndianStructure):
+    _pack_ = 1
+    _fields_ = [
+        ('_address', ctypes.c_uint64),
+        ('_length', ctypes.c_uint32)
+    ]
+
+
+class DebuggerGetTaskInfoHeaderPacket(ctypes.LittleEndianStructure):
+    _pack_ = 1
+    _fields_ = [
+        ('num_tasks', ctypes.c_uint32),
+        ('task_context_size', ctypes.c_uint32)
+    ]
+
+
+class DebuggerTaskInfo(ctypes.LittleEndianStructure):
+    _pack_ = 1
+    _fields_ = [
+        ('name', ctypes.c_char * (32+1)),
+        ('entry_point', ctypes.c_uint64),
+        ('stack', InterruptStackFrame)
+    ]

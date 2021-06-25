@@ -1,4 +1,4 @@
-# Creating a kernel debugger from scratch 
+# Creating a kernel debugger from scratch - Part I
 A while ago I started playing around with kernel development (or "OS development", if you're generous) and because I
 primarily work on Windows I wanted to be able to do all the development on that platform.\
 However, and perhaps not surprisingly, most hobby OS development happens on Linux and the tools available 
