@@ -33,6 +33,9 @@ class Debugger:
                     packet_id, packet_len, packet = self._conn.read_last_packet()
                     if packet_id == TRACE:
                         # TODO: this is probably wrong, it shouldn't block
+                        string = packet.decode('utf-8')
+                        if 'debugger' in string:
+                            print('.')
                         self._trace_queue.put(packet.decode("utf-8"), block=True, timeout=None)
                     elif (packet_id & RESP_PACKET_MASK) == RESP_PACKET_MASK:
                         # a response packet
@@ -131,45 +134,3 @@ class Debugger:
             # wait for 1/4 of a second
             time.sleep(0.25)
         self._send_queue.join()
-
-    # keep this one for testing; it works
-    def _main_loop_2(self):
-        last_bp_rip = 0
-        caught_gpf = False
-        # the basic debugger loop
-        try:
-            packet_id, packet_len, packet = self._conn.read_one_packet_block()
-            while True:
-                if packet_id == self._conn.TRACE:
-                    payload_as_string = packet.decode("utf-8")
-                    print(payload_as_string)
-                # WIP: we capture int3's as well as GPFs the same way, except we never ask the kernel to continue
-                # if it's a GPF
-                elif packet_id == self._conn.INT3 or packet_id == self._conn.GPF:
-                    bp_packet = DebuggerBpPacket.from_buffer_copy(packet)
-                    last_bp_rip = bp_packet.stack.rip
-                    caught_gpf = packet_id == self._conn.GPF
-                    if not caught_gpf:
-                        self._on_bp_impl(last_bp_rip, bp_packet)
-                    else:
-                        self._conn.send_kernel_get_task_list()
-                        self._on_gpf_impl(last_bp_rip, bp_packet)
-                    # ask the kernel for the next couple of bytes of instructions
-                    self._conn.send_kernel_read_target_memory(last_bp_rip, 64)
-                    if not caught_gpf:
-                        # tell the kernel to continue execution if it's a bp
-                        self._conn.send_kernel_continue()
-                elif packet_id == self._conn.READ_TARGET_MEMORY_RESP:
-                    # response from last int3 is a bunch of instruction bytes
-                    self._disassemble_bytes_impl(packet, last_bp_rip)
-                elif packet_id == self._conn.GET_TASK_LIST_RESP:
-                    ti_hdr_packet = DebuggerGetTaskInfoHeaderPacket.from_buffer_copy(packet)
-                    print(f'''GET_TASK_LIST_RESP returned {ti_hdr_packet.num_tasks} tasks of '''
-                          f'''{ti_hdr_packet.task_context_size} bytes each''')
-                    ti_packet = DebuggerTaskInfo.from_buffer_copy(packet,
-                                                                  ctypes.sizeof(DebuggerGetTaskInfoHeaderPacket))
-                    print(f'task 1 name {ti_packet.name.decode()}, entry point {hex(ti_packet.entry_point)}')
-                # read the next packet
-                packet_id, packet_len, packet = self._conn.read_one_packet_block()
-        finally:
-            print(">debugger disconnecting")

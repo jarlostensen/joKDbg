@@ -66,7 +66,8 @@ class DebuggerSerialConnectionWin32(DebuggerSerialConnection):
                 result, buffer = win32file.ReadFile(self._pipe, self.__PIPE_BUFFER_SIZE)
                 bytes_read = len(buffer)
                 if self._buffer is not None and len(self._buffer) > 0:
-                    self._buffer = self._buffer + buffer
+                    if bytes_read > 0:
+                        self._buffer = self._buffer + buffer
                 else:
                     self._buffer = buffer
             self._left_to_read = self._left_to_read - bytes_read
@@ -81,10 +82,10 @@ class DebuggerSerialConnectionWin32(DebuggerSerialConnection):
                         self._left_to_read = self._last_packet_length + self._left_to_read
                     else:
                         # read the next packet header
-                        self._left_to_read = ctypes.sizeof(DebuggerSerialPacket)
+                        self._left_to_read = ctypes.sizeof(DebuggerSerialPacket) + self._left_to_read
                         self._has_packet = True
                 elif self._read_state == self.__READING_BODY:
-                    self._left_to_read = ctypes.sizeof(DebuggerSerialPacket)
+                    self._left_to_read = ctypes.sizeof(DebuggerSerialPacket) + self._left_to_read
                     self._read_state = self.__READING_PACKET
                     self._has_packet = True
         except pywintypes.error as e:
