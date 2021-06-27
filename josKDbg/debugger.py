@@ -20,22 +20,20 @@ class Debugger:
         self._command_queue = queue.Queue()
         self._response_queue = queue.Queue()
         self._send_queue = queue.Queue()
-        self._read_thread = None
-        self._write_thread = None
+        self._rw_thread = None
         self._disconnected = True
         self._state = self._STATE_WAITING
 
-    def _read_thread_func(self):
+    def _rw_thread_func(self):
         try:
             while not self._disconnected:
+                # reads are non-blocking
                 self._conn.read_avail()
                 if self._conn.has_packet():
                     packet_id, packet_len, packet = self._conn.read_last_packet()
                     if packet_id == TRACE:
-                        # TODO: this is probably wrong, it shouldn't block
+                        # TODO: this is probably wrong, it shouldn't block?
                         string = packet.decode('utf-8')
-                        if 'debugger' in string:
-                            print('.')
                         self._trace_queue.put(packet.decode("utf-8"), block=True, timeout=None)
                     elif (packet_id & RESP_PACKET_MASK) == RESP_PACKET_MASK:
                         # a response packet
@@ -44,6 +42,7 @@ class Debugger:
                         # a command packet
                         self._command_queue.put((packet_id, packet), block=True, timeout=None)
 
+                # writes are immediate (and technically blocking)
                 while not self._send_queue.empty():
                     packet_id, packet_data = self._send_queue.get(block=True, timeout=None)
                     if packet_id == READ_TARGET_MEMORY:
@@ -52,7 +51,9 @@ class Debugger:
                         self._conn.send_kernel_get_task_list()
                     else:
                         pass
-                time.sleep(0.25)
+                else:
+                    # a latency of 1/10th of a second is fine for our needs
+                    time.sleep(0.1)
         except UnicodeDecodeError:
             # sometimes happens during a TRACE and it appears to be an intermittent VirtualBox issue...
             pass
@@ -60,26 +61,9 @@ class Debugger:
             # TODO: what do we do now?
             self._disconnected = True
 
-    def _write_thread_func(self):
-        try:
-            while not self._disconnected:
-                while not self._send_queue.empty():
-                    packet_id, packet_data = self._send_queue.get(block=True, timeout=None)
-                    if packet_id == READ_TARGET_MEMORY:
-                        self._conn.send_kernel_read_target_memory(packet_data[0], packet_data[1])
-                    elif packet_id == GET_TASK_LIST:
-                        self._conn.send_kernel_get_task_list()
-                    else:
-                        pass
-                    self._send_queue.task_done()
-        except Exception as e:
-            self._disconnected = True
-
     def _start_threads(self):
-        self._read_thread = threading.Thread(target=self._read_thread_func, daemon=True)
-        self._read_thread.start()
-        #self._write_thread = threading.Thread(target=self._write_thread_func, daemon=True)
-        #self._write_thread.start()
+        self._rw_thread = threading.Thread(target=self._rw_thread_func, daemon=True)
+        self._rw_thread.start()
 
     def pipe_connect(self, pipe_name):
         self._conn = debugger_serial_pipe_connection_factory()
@@ -100,6 +84,7 @@ class Debugger:
                     if packet_id == INT3:
                         bp_packet = DebuggerBpPacket.from_buffer_copy(packet)
                         last_rip = bp_packet.stack.rip
+                        self._on_breakpoint(bp_packet)
                         self._state = self._STATE_BREAK
                         self._send_queue.put((READ_TARGET_MEMORY, (last_rip, 64)))
                     elif packet_id == GPF:
