@@ -46,6 +46,7 @@ class TestKernel:
         bp_packet.stack.rip = 0x100
         bp_packet.stack.cs = 1
         bp_packet.stack.ss = 2
+        bp_packet.stack.rflags = 0xffffffff
         self._send_debugger_packet(debugger_commands.INT3, bytearray(bp_packet))
         print("in breakpoint loop...")
         while True:

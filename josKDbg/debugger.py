@@ -23,6 +23,7 @@ class Debugger:
         self._rw_thread = None
         self._disconnected = True
         self._state = self._STATE_WAITING
+        self._last_rip = 0
 
     def _rw_thread_func(self):
         try:
@@ -41,7 +42,9 @@ class Debugger:
                     else:
                         # a command packet
                         self._command_queue.put((packet_id, packet), block=True, timeout=None)
-
+                else:
+                    # a latency of 1/10th of a second is fine for our needs
+                    time.sleep(0.1)
                 # writes are immediate (and technically blocking)
                 while not self._send_queue.empty():
                     packet_id, packet_data = self._send_queue.get(block=True, timeout=None)
@@ -51,9 +54,6 @@ class Debugger:
                         self._conn.send_kernel_get_task_list()
                     else:
                         pass
-                else:
-                    # a latency of 1/10th of a second is fine for our needs
-                    time.sleep(0.1)
         except UnicodeDecodeError:
             # sometimes happens during a TRACE and it appears to be an intermittent VirtualBox issue...
             pass
@@ -74,6 +74,48 @@ class Debugger:
 
     def main_loop(self):
         self._main_loop()
+
+    def update(self):
+        if self._disconnected:
+            raise Exception("debugger disconnected")
+        while not self._command_queue.empty():
+            try:
+                packet_id, packet = self._command_queue.get_nowait()
+                if packet_id == INT3:
+                    bp_packet = DebuggerBpPacket.from_buffer_copy(packet)
+                    self._last_rip = bp_packet.stack.rip
+                    self._on_breakpoint(bp_packet)
+                    self._state = self._STATE_BREAK
+                    self._send_queue.put((READ_TARGET_MEMORY, (self._last_rip, 64)))
+                elif packet_id == GPF:
+                    bp_packet = DebuggerBpPacket.from_buffer_copy(packet)
+                    last_rip = bp_packet.stack.rip
+                    self._state = self._STATE_GPF
+                    self._send_queue.put((READ_TARGET_MEMORY, (self._last_rip, 64)))
+                self._command_queue.task_done()
+            except queue.Empty:
+                # timed out
+                pass
+        while not self._response_queue.empty():
+            try:
+                packet_id, packet = self._response_queue.get_nowait()
+                if packet_id == READ_TARGET_MEMORY_RESP:
+                    if self._state == self._STATE_BREAK or self._state == self._STATE_GPF:
+                        self._disassemble_bytes_impl(packet, self._last_rip)
+                    else:
+                        print(f'unhandled')
+                elif packet_id == GET_TASK_LIST_RESP:
+                    ti_hdr_packet = DebuggerGetTaskInfoHeaderPacket.from_buffer_copy(packet)
+                    print(f'''GET_TASK_LIST_RESP returned {ti_hdr_packet.num_tasks} tasks of '''
+                          f'''{ti_hdr_packet.task_context_size} bytes each''')
+                    ti_packet = DebuggerTaskInfo.from_buffer_copy(packet,
+                                                                  ctypes.sizeof(DebuggerGetTaskInfoHeaderPacket))
+                    print(f'task 1 name {ti_packet.name.decode()}, entry point {hex(ti_packet.entry_point)}')
+            except queue.Empty:
+                # timed out
+                pass
+        if not self._trace_queue.empty():
+            self._process_trace_queue_impl(self._trace_queue)
 
     def _main_loop(self):
         last_rip = 0
