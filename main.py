@@ -113,6 +113,8 @@ class DebuggerApp(DebugCore.Debugger):
         # other internals
         self._cli_history = []
         self._asm_formatter = iced_x86.Formatter(iced_x86.FormatterSyntax.NASM)
+        self._symbol_lookup = None
+        self._pdb_path = ''
 
     def _on_target_memory_read(self, packet):
         self._disassemble_bytes_impl(packet, self._last_bp_packet.stack.rip)
@@ -128,7 +130,7 @@ class DebuggerApp(DebugCore.Debugger):
             elif cmd == 'r':
                 self._dump_registers(self._last_bp_packet.stack)
             elif cmd == 'u':
-                self.read_target_memory(self._last_bp_packet.rip, 52)
+                self.read_target_memory(self._last_bp_packet.stack.rip, 52)
             elif cmd == 'p':
                 self.single_step()
             # elif cmd == '~':
@@ -138,7 +140,8 @@ class DebuggerApp(DebugCore.Debugger):
         if self._state == self._STATE_WAITING:
             self._cli.configure(state=tk.DISABLED)
 
-    def run(self):
+    def run(self, pdb_path):
+        self._pdb_path = pdb_path
         try:
             self.pipe_connect(r'\\.\pipe\josxDbg')
             while True:
@@ -147,18 +150,57 @@ class DebuggerApp(DebugCore.Debugger):
                 self._root.update()
                 time.sleep(0.1)
         except Exception as e:
-            print("disconnecting")
+            print(f'disconnecting : {str(e)}')
+
+    def _disassemble_output_instruction(self, instr: iced_x86.Instruction, bytes_str: str, disasm: str,
+                                        lookup_calls: bool):
+        if lookup_calls:
+            cflow = instr.flow_control
+            if cflow == iced_x86.FlowControl.CALL or cflow == iced_x86.FlowControl.INDIRECT_CALL:
+                call_target = 0
+                if instr.op0_kind == iced_x86.OpKind.REGISTER:
+                    # TODO: TESTING ONLY
+                    if instr.op0_register == iced_x86.Register.RAX:
+                        call_target = self._last_bp_packet.stack.rax
+                    elif instr.op0_register == iced_x86.Register.RCX:
+                        call_target = self._last_bp_packet.stack.rcx
+                    elif instr.op0_register == iced_x86.Register.RDX:
+                        call_target = self._last_bp_packet.stack.rdx
+                    elif instr.op0_register == iced_x86.Register.R8:
+                        call_target = self._last_bp_packet.stack.r8
+                    elif instr.op0_register == iced_x86.Register.R9:
+                        call_target = self._last_bp_packet.stack.r9
+                    elif instr.op0_register == iced_x86.Register.R10:
+                        call_target = self._last_bp_packet.stack.r10
+                    elif instr.op0_register == iced_x86.Register.R11:
+                        call_target = self._last_bp_packet.stack.r11
+                    elif instr.op0_register == iced_x86.Register.R12:
+                        call_target = self._last_bp_packet.stack.r12
+                    elif instr.op0_register == iced_x86.Register.R13:
+                        call_target = self._last_bp_packet.stack.r13
+                    elif instr.op0_register == iced_x86.Register.R14:
+                        call_target = self._last_bp_packet.stack.r14
+                    elif instr.op0_register == iced_x86.Register.R15:
+                        call_target = self._last_bp_packet.stack.r15
+                    elif instr.op0_register == iced_x86.Register.RSI:
+                        call_target = self._last_bp_packet.stack.rsi
+                    elif instr.op0_register == iced_x86.Register.RDI:
+                        call_target = self._last_bp_packet.stack.rdi
+                if call_target != 0:
+                    lookup = self._symbol_lookup.lookup(call_target)
+                    disasm = disasm + ' ==> ' + lookup
+        self._output_window.insert(tk.END, f'\n{instr.ip:016X} {bytes_str:30} {disasm}')
 
     def _disassemble_bytes_impl(self, raw_bytes, at):
         decoder = iced_x86.Decoder(64, raw_bytes, ip=at)
         line = 0
         for instr in decoder:
+            if instr.code == iced_x86.Code.INVALID or line == 5:
+                break
             disasm = self._asm_formatter.format(instr)
             start_index = instr.ip - at
             bytes_str = raw_bytes[start_index:start_index + instr.len].hex().lower()
-            if line == 5 or 'bad' in disasm:
-                break
-            self._output_window.insert(tk.END, f"\n{instr.ip:016X} {bytes_str:30} {disasm}")
+            self._disassemble_output_instruction(instr, bytes_str, disasm, False)
             line = line + 1
         self._output_window.insert(tk.END, f'\n\n')
 
@@ -166,7 +208,7 @@ class DebuggerApp(DebugCore.Debugger):
         print('>connected: ' + str(kernel_info_json))
         image_info = kernel_info_json['image_info']
         from pdbparse.symlookup import Lookup
-        self._pdb_lookup_info = [(r'BOOTX64.PDB', image_info['base'])]
+        self._pdb_lookup_info = [(self._pdb_path, image_info['base'])]
 
     def _dump_registers(self, stack):
         self._output_window.insert(tk.INSERT,
@@ -202,15 +244,17 @@ class DebuggerApp(DebugCore.Debugger):
 
     def _on_breakpoint(self):
         try:
-            from pdbparse.symlookup import Lookup
-            lobj = Lookup(self._pdb_lookup_info)
-            lookup = lobj.lookup(self._last_bp_packet.stack.rip)
+            if self._symbol_lookup is None:
+                from pdbparse.symlookup import Lookup
+                self._symbol_lookup = Lookup(self._pdb_lookup_info)
+            lookup = self._symbol_lookup.lookup(self._last_bp_packet.stack.rip)
             self._output_window.insert(tk.INSERT, f'\n>break - code @ {lookup}')
             raw_bytes = bytearray(self._last_bp_packet.instruction)
             instr = iced_x86.Decoder(64, raw_bytes, ip=self._last_bp_packet.stack.rip).decode()
             disasm = self._asm_formatter.format(instr)
             bytes_str = raw_bytes[:instr.len].hex().lower()
-            self._output_window.insert(tk.END, f"\n{instr.ip:016X} {bytes_str:30} {disasm}")
+            self._disassemble_output_instruction(instr, bytes_str, disasm, True)
+            self._output_window.insert(tk.END, f'\n\n')
             self._cli.configure(state=tk.NORMAL)
             self._input.set('')
         except Exception as e:
@@ -232,5 +276,5 @@ class DebuggerApp(DebugCore.Debugger):
 
 if __name__ == '__main__':
     app = DebuggerApp()
-    app.run()
+    app.run(f'e:/dev/osdev/josx64/build/bootx64.pdb')
     # app._root.mainloop()
