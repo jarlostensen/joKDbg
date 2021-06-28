@@ -1,12 +1,12 @@
 """
-This is a sandbox of experimental code to use and refine the josKDbg Debugger module
+This is a sandbox of experimental code to use and refine the DebugCore Debugger module
 """
 import time
 import pefile
 
 # NOTE: https://stackoverflow.com/questions/21048073/install-python-package-from-github-using-pycharm
 import pdbparse
-import josKDbg
+import DebugCore
 
 # disassembler https://pypi.org/project/iced-x86/
 import iced_x86
@@ -15,113 +15,12 @@ import queue
 import tkinter as tk
 
 
-def test_debugger():
-    class MyDebugger(josKDbg.Debugger):
-        def __init__(self):
-            self._pdb_lookup_info = None
-            super().__init__()
-
-        def _disassemble_bytes_impl(self, bytes, at):
-            decoder = iced_x86.Decoder(64, bytes, ip=at)
-            formatter = iced_x86.Formatter(iced_x86.FormatterSyntax.NASM)
-            line = 0
-            for instr in decoder:
-                disasm = formatter.format(instr)
-                start_index = instr.ip - at
-                bytes_str = bytes[start_index:start_index + instr.len].hex().upper()
-                if line == 5 or 'bad' in disasm:
-                    break
-                print(f"{instr.ip:016X} {bytes_str:30} {disasm}")
-                line = line + 1
-
-        def _on_connect_impl(self, kernel_info_json):
-            print('>connected: ' + str(kernel_info_json))
-            image_info = kernel_info_json['image_info']
-            from pdbparse.symlookup import Lookup
-            self._pdb_lookup_info = [(r'BOOTX64.PDB', image_info['base'])]
-
-        def _on_breakpoint(self, bp_packet):
-            from pdbparse.symlookup import Lookup
-            lobj = Lookup(self._pdb_lookup_info)
-            lookup = lobj.lookup(bp_packet.stack.rip)
-            print(f'\n>break in code @ {lookup}')
-            print(
-                f'rax {bp_packet.stack.rax:016x} rbx {bp_packet.stack.rbx:016x} rcx {bp_packet.stack.rcx:016x} rdx {bp_packet.stack.rdx:016x}')
-            print(
-                f'rsi {bp_packet.stack.rsi:016x} rdi {bp_packet.stack.rdi:016x} rsp {bp_packet.stack.rsp:016x} rbp {bp_packet.stack.rbp:016x}')
-            print(
-                f'r8  {bp_packet.stack.r8:016x} r9  {bp_packet.stack.r9:016x} r10 {bp_packet.stack.r10:016x} r11 {bp_packet.stack.r11:016x}')
-            print(
-                f'r12 {bp_packet.stack.r12:016x} r13 {bp_packet.stack.r13:016x} r14 {bp_packet.stack.r14:016x} r15 {bp_packet.stack.r15:016x}')
-            print(
-                f'rflags {bp_packet.stack.rflags:08x} cs {bp_packet.stack.cs:02x} ss {bp_packet.stack.ss:02x}')
-            if bp_packet.stack.rflags & (1 << 0) != 0:
-                print('CF', end=' ')
-            if bp_packet.stack.rflags & (1 << 6) != 0:
-                print('ZF', end=' ')
-            if bp_packet.stack.rflags & (1 << 7) != 0:
-                print('SF', end=' ')
-            if bp_packet.stack.rflags & (1 << 8) != 0:
-                print('TF', end=' ')
-            if bp_packet.stack.rflags & (1 << 9) != 0:
-                print('IF', end=' ')
-            if bp_packet.stack.rflags & (1 << 10) != 0:
-                print('DF', end=' ')
-            if bp_packet.stack.rflags & (1 << 11) != 0:
-                print('OF', end=' ')
-            print()
-            print()
-
-        def _on_bp_impl(self, at, bp_packet):
-            print()
-            print(f'>breakpoint @ {hex(at)}')
-            self._dump_bp_info(bp_packet)
-
-        def _on_gpf_impl(self, at, bp_packet):
-            print()
-            print(f'>#GPF @ {hex(at)}!!!!')
-            self._dump_bp_info(bp_packet)
-
-        def _process_trace_queue_impl(self, trace_queue: queue.Queue):
-            while not trace_queue.empty():
-                print(trace_queue.get_nowait())
-            trace_queue.task_done()
-
-    debugger = MyDebugger()
-    debugger.pipe_connect(r'\\.\pipe\josxDbg')
-    try:
-        debugger.main_loop()
-    finally:
-        print('\n>debugger exiting')
-
-
-def test_pe_load():
-    pe = pefile.PE(r'BOOTX64.EFI')
-    for i in pe.DIRECTORY_ENTRY_BASERELOC:
-        print(i)
-
-
-def test_pdb_load():
-    try:
-        pdb = pdbparse.parse(r'BOOTX64.PDB', fast_load=True)
-        pdb.STREAM_DBI.load()
-        pdb._update_names()
-        pdb.STREAM_GSYM = pdb.STREAM_GSYM.reload()
-        if pdb.STREAM_GSYM.size:
-            pdb.STREAM_GSYM.load()
-        pdb.STREAM_SECT_HDR = pdb.STREAM_SECT_HDR.reload()
-        pdb.STREAM_SECT_HDR.load()
-        # These are the dicey ones
-        pdb.STREAM_OMAP_FROM_SRC = pdb.STREAM_OMAP_FROM_SRC.reload()
-        pdb.STREAM_OMAP_FROM_SRC.load()
-        pdb.STREAM_SECT_HDR_ORIG = pdb.STREAM_SECT_HDR_ORIG.reload()
-        pdb.STREAM_SECT_HDR_ORIG.load()
-    except AttributeError as e:
-        pass
-
-
-class DebuggerApp(josKDbg.Debugger):
-
+class DebuggerApp(DebugCore.Debugger):
+    """
+    The main debugger application
+    DebugCore.Debugger drives the connection and commands to and from the kernel while this class
+    deals (mostly) with UX and data analysis
+    """
     __BASE_FONT = ('Consolas', 9)
     __DARK_BG = 'gray20'
     __DARK_FG = 'lightgray'
@@ -131,11 +30,13 @@ class DebuggerApp(josKDbg.Debugger):
     __BOTTOM_PANE_HEIGHT = 300
     __PANEL_WIDTH = 500 + 728
 
+    __DEBUGGER_NOT_CONNECTED_MSG = f'Debugger not connected...'
+
     def __init__(self):
         super().__init__()
 
         self._root = tk.Tk()
-        self._root.title("josKDbg")
+        self._root.title("DebugCore")
         self._root.config(bg="pink")
         # for now
         self._root.resizable(False, False)
@@ -205,11 +106,30 @@ class DebuggerApp(josKDbg.Debugger):
         self._cli = tk.Entry(self._cli_frame, text=self._input)
         self._cli.pack(side=tk.LEFT, fill=tk.BOTH, padx=2, expand=True)
         self._cli.bind('<Return>', self._on_cli_enter)
+        self._input.set(self.__DEBUGGER_NOT_CONNECTED_MSG)
+        self._cli.configure(state=tk.DISABLED)
+
+        # other internals
+        self._cli_history = []
+
+    def _on_target_memory_read(self, packet):
+        self._disassemble_bytes_impl(packet, self._last_stack.rip)
 
     def _on_cli_enter(self, e):
-        if 'g' in self._input.get() and self._state == self._STATE_BREAK:
-            self._conn.send_kernel_continue()
-            self._input = ''
+        cmd = self._input.get()
+        next_input_state = ''
+        self._cli_history.append(cmd)
+        if self._state == self._STATE_BREAK:
+            if cmd == 'g':
+                next_input_state = self.__DEBUGGER_NOT_CONNECTED_MSG
+                self.continue_execution()
+            elif cmd == 'r':
+                self._dump_registers(self._last_stack)
+            elif cmd == 'u':
+                self.read_target_memory(self._last_stack.rip, 52)
+        self._input.set(next_input_state)
+        if len(next_input_state) > 0:
+            self._cli.configure(state=tk.DISABLED)
 
     def run(self):
         try:
@@ -220,20 +140,21 @@ class DebuggerApp(josKDbg.Debugger):
                 self._root.update()
                 time.sleep(0.1)
         except Exception as e:
-            print("disconneting")
+            print("disconnecting")
 
-    def _disassemble_bytes_impl(self, bytes, at):
-        decoder = iced_x86.Decoder(64, bytes, ip=at)
+    def _disassemble_bytes_impl(self, raw_bytes, at):
+        decoder = iced_x86.Decoder(64, raw_bytes, ip=at)
         formatter = iced_x86.Formatter(iced_x86.FormatterSyntax.NASM)
         line = 0
         for instr in decoder:
             disasm = formatter.format(instr)
             start_index = instr.ip - at
-            bytes_str = bytes[start_index:start_index + instr.len].hex().upper()
+            bytes_str = raw_bytes[start_index:start_index + instr.len].hex().upper()
             if line == 5 or 'bad' in disasm:
                 break
             self._output_window.insert(tk.END, f"\n{instr.ip:016X} {bytes_str:30} {disasm}")
             line = line + 1
+        self._output_window.insert(tk.END, f'\n\n')
 
     def _on_connect_impl(self, kernel_info_json):
         print('>connected: ' + str(kernel_info_json))
@@ -241,41 +162,45 @@ class DebuggerApp(josKDbg.Debugger):
         from pdbparse.symlookup import Lookup
         self._pdb_lookup_info = [(r'BOOTX64.PDB', image_info['base'])]
 
-    def _on_breakpoint(self, bp_packet):
-        from pdbparse.symlookup import Lookup
-        lobj = Lookup(self._pdb_lookup_info)
-        lookup = lobj.lookup(bp_packet.stack.rip)
-        self._output_window.insert(tk.INSERT, f'\n>break in code @ {lookup}')
+    def _dump_registers(self, stack):
         self._output_window.insert(tk.INSERT,
-                                   f'\nrax {bp_packet.stack.rax:016x} rbx {bp_packet.stack.rbx:016x} rcx '
-                                   f'{bp_packet.stack.rcx:016x} rdx {bp_packet.stack.rdx:016x}')
+                                   f'\nrax {stack.rax:016x} rbx {stack.rbx:016x} rcx '
+                                   f'{stack.rcx:016x} rdx {stack.rdx:016x}')
         self._output_window.insert(tk.INSERT,
-                                   f'\nrsi {bp_packet.stack.rsi:016x} rdi {bp_packet.stack.rdi:016x} rsp '
-                                   f'{bp_packet.stack.rsp:016x} rbp {bp_packet.stack.rbp:016x}')
+                                   f'\nrsi {stack.rsi:016x} rdi {stack.rdi:016x} rsp '
+                                   f'{stack.rsp:016x} rbp {stack.rbp:016x}')
         self._output_window.insert(tk.INSERT,
-                                   f'\nr8  {bp_packet.stack.r8:016x} r9  {bp_packet.stack.r9:016x} r10 '
-                                   f'{bp_packet.stack.r10:016x} r11 {bp_packet.stack.r11:016x}')
+                                   f'\nr8  {stack.r8:016x} r9  {stack.r9:016x} r10 '
+                                   f'{stack.r10:016x} r11 {stack.r11:016x}')
         self._output_window.insert(tk.INSERT,
-                                   f'\nr12 {bp_packet.stack.r12:016x} r13 {bp_packet.stack.r13:016x} r14 '
-                                   f'{bp_packet.stack.r14:016x} r15 {bp_packet.stack.r15:016x}')
+                                   f'\nr12 {stack.r12:016x} r13 {stack.r13:016x} r14 '
+                                   f'{stack.r14:016x} r15 {stack.r15:016x}')
         self._output_window.insert(tk.INSERT,
-                                   f'\nrflags {bp_packet.stack.rflags:08x} cs {bp_packet.stack.cs:02x} ss '
-                                   f'{bp_packet.stack.ss:02x}\n')
-        if bp_packet.stack.rflags & (1 << 0) != 0:
+                                   f'\nrflags {stack.rflags:08x} cs {stack.cs:02x} ss '
+                                   f'{stack.ss:02x}\n')
+        if stack.rflags & (1 << 0) != 0:
             self._output_window.insert(tk.INSERT, 'CF ')
-        if bp_packet.stack.rflags & (1 << 6) != 0:
+        if stack.rflags & (1 << 6) != 0:
             self._output_window.insert(tk.INSERT, 'ZF ')
-        if bp_packet.stack.rflags & (1 << 7) != 0:
+        if stack.rflags & (1 << 7) != 0:
             self._output_window.insert(tk.INSERT, 'SF ')
-        if bp_packet.stack.rflags & (1 << 8) != 0:
+        if stack.rflags & (1 << 8) != 0:
             self._output_window.insert(tk.INSERT, 'TF ')
-        if bp_packet.stack.rflags & (1 << 9) != 0:
+        if stack.rflags & (1 << 9) != 0:
             self._output_window.insert(tk.INSERT, 'IF ')
-        if bp_packet.stack.rflags & (1 << 10) != 0:
+        if stack.rflags & (1 << 10) != 0:
             self._output_window.insert(tk.INSERT, 'DF ')
-        if bp_packet.stack.rflags & (1 << 11) != 0:
+        if stack.rflags & (1 << 11) != 0:
             self._output_window.insert(tk.INSERT, 'OF ')
         self._output_window.insert(tk.INSERT, '\n')
+
+    def _on_breakpoint(self):
+        from pdbparse.symlookup import Lookup
+        lobj = Lookup(self._pdb_lookup_info)
+        lookup = lobj.lookup(self._last_stack.rip)
+        self._output_window.insert(tk.INSERT, f'\n>break - code @ {lookup}')
+        self._cli.configure(state=tk.NORMAL)
+        self._input.set('')
 
     def _on_bp_impl(self, at, bp_packet):
         self._output_window.insert(tk.INSERT, f'\n>breakpoint @ {hex(at)}')
@@ -294,8 +219,4 @@ class DebuggerApp(josKDbg.Debugger):
 if __name__ == '__main__':
     app = DebuggerApp()
     app.run()
-    #app._root.mainloop()
-
-    # test_pdb_load()
-    # test_debugger_loop()
-    # test_debugger()
+    # app._root.mainloop()

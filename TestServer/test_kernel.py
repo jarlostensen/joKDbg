@@ -1,7 +1,7 @@
 import ctypes
 from .test_kernel_win32 import TestKernelWin32
-from josKDbg import debugger_packets
-from josKDbg import debugger_commands
+from DebugCore import debugger_packets
+from DebugCore import debugger_commands
 import json
 
 

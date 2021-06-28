@@ -23,7 +23,7 @@ class Debugger:
         self._rw_thread = None
         self._disconnected = True
         self._state = self._STATE_WAITING
-        self._last_rip = 0
+        self._last_stack = None
 
     def _rw_thread_func(self):
         try:
@@ -72,8 +72,16 @@ class Debugger:
         self._start_threads()
         self._on_connect_impl(self._conn.kernel_connection_info())
 
-    def main_loop(self):
-        self._main_loop()
+    def _on_target_memory_read(self, packet): pass
+
+    def read_target_memory(self, at, count):
+        self._send_queue.put((READ_TARGET_MEMORY, (at, count)))
+
+    def continue_execution(self):
+        if self._state == self._STATE_BREAK:
+            self._conn.send_kernel_continue()
+        else:
+            raise Exception("not in breakpoint")
 
     def update(self):
         if self._disconnected:
@@ -83,15 +91,13 @@ class Debugger:
                 packet_id, packet = self._command_queue.get_nowait()
                 if packet_id == INT3:
                     bp_packet = DebuggerBpPacket.from_buffer_copy(packet)
-                    self._last_rip = bp_packet.stack.rip
-                    self._on_breakpoint(bp_packet)
+                    self._last_stack = bp_packet.stack
+                    self._on_breakpoint()
                     self._state = self._STATE_BREAK
-                    self._send_queue.put((READ_TARGET_MEMORY, (self._last_rip, 64)))
                 elif packet_id == GPF:
                     bp_packet = DebuggerBpPacket.from_buffer_copy(packet)
-                    last_rip = bp_packet.stack.rip
+                    self._last_stack = bp_packet.stack
                     self._state = self._STATE_GPF
-                    self._send_queue.put((READ_TARGET_MEMORY, (self._last_rip, 64)))
                 self._command_queue.task_done()
             except queue.Empty:
                 # timed out
@@ -100,10 +106,7 @@ class Debugger:
             try:
                 packet_id, packet = self._response_queue.get_nowait()
                 if packet_id == READ_TARGET_MEMORY_RESP:
-                    if self._state == self._STATE_BREAK or self._state == self._STATE_GPF:
-                        self._disassemble_bytes_impl(packet, self._last_rip)
-                    else:
-                        print(f'unhandled')
+                    self._on_target_memory_read(packet)
                 elif packet_id == GET_TASK_LIST_RESP:
                     ti_hdr_packet = DebuggerGetTaskInfoHeaderPacket.from_buffer_copy(packet)
                     print(f'''GET_TASK_LIST_RESP returned {ti_hdr_packet.num_tasks} tasks of '''
@@ -116,48 +119,3 @@ class Debugger:
                 pass
         if not self._trace_queue.empty():
             self._process_trace_queue_impl(self._trace_queue)
-
-    def _main_loop(self):
-        last_rip = 0
-        while not self._disconnected:
-            while not self._command_queue.empty():
-                try:
-                    packet_id, packet = self._command_queue.get_nowait()
-                    if packet_id == INT3:
-                        bp_packet = DebuggerBpPacket.from_buffer_copy(packet)
-                        last_rip = bp_packet.stack.rip
-                        self._on_breakpoint(bp_packet)
-                        self._state = self._STATE_BREAK
-                        self._send_queue.put((READ_TARGET_MEMORY, (last_rip, 64)))
-                    elif packet_id == GPF:
-                        bp_packet = DebuggerBpPacket.from_buffer_copy(packet)
-                        last_rip = bp_packet.stack.rip
-                        self._state = self._STATE_GPF
-                        self._send_queue.put((READ_TARGET_MEMORY, (last_rip, 64)))
-                    self._command_queue.task_done()
-                except queue.Empty:
-                    # timed out
-                    pass
-            while not self._response_queue.empty():
-                try:
-                    packet_id, packet = self._response_queue.get_nowait()
-                    if packet_id == READ_TARGET_MEMORY_RESP:
-                        if self._state == self._STATE_BREAK or self._state == self._STATE_GPF:
-                            self._disassemble_bytes_impl(packet, last_rip)
-                        else:
-                            print(f'unhandled')
-                    elif packet_id == GET_TASK_LIST_RESP:
-                        ti_hdr_packet = DebuggerGetTaskInfoHeaderPacket.from_buffer_copy(packet)
-                        print(f'''GET_TASK_LIST_RESP returned {ti_hdr_packet.num_tasks} tasks of '''
-                              f'''{ti_hdr_packet.task_context_size} bytes each''')
-                        ti_packet = DebuggerTaskInfo.from_buffer_copy(packet,
-                                                                      ctypes.sizeof(DebuggerGetTaskInfoHeaderPacket))
-                        print(f'task 1 name {ti_packet.name.decode()}, entry point {hex(ti_packet.entry_point)}')
-                except queue.Empty:
-                    # timed out
-                    pass
-            if not self._trace_queue.empty():
-                self._process_trace_queue_impl(self._trace_queue)
-            # wait for 1/4 of a second
-            time.sleep(0.25)
-        self._send_queue.join()
