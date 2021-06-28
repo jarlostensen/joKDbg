@@ -58,7 +58,7 @@ class Debugger:
             # sometimes happens during a TRACE and it appears to be an intermittent VirtualBox issue...
             pass
         except Exception as e:
-            # TODO: what do we do now?
+            print("rw_thread exception: " + str(e))
             self._disconnected = True
 
     def _start_threads(self):
@@ -100,14 +100,14 @@ class Debugger:
         while not self._command_queue.empty():
             try:
                 packet_id, packet = self._command_queue.get_nowait()
-                if packet_id == INT3:
+                if packet_id == BREAKPOINT:
                     self._last_bp_packet = DebuggerBpPacket.from_buffer_copy(packet)
                     self._on_breakpoint()
                     self._state = self._STATE_BREAK
                 elif packet_id == GPF:
-                    bp_packet = DebuggerBpPacket.from_buffer_copy(packet)
-                    self._last_bp_packet = bp_packet
+                    self._last_bp_packet = DebuggerBpPacket.from_buffer_copy(packet)
                     self._state = self._STATE_GPF
+                    self._on_gpf()
                 self._command_queue.task_done()
             except queue.Empty:
                 # timed out

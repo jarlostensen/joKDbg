@@ -1,9 +1,9 @@
 """
 This is a sandbox of experimental code to use and refine the DebugCore Debugger module
 """
-import ctypes
 import time
-import pefile
+import re
+import string
 
 # NOTE: https://stackoverflow.com/questions/21048073/install-python-package-from-github-using-pycharm
 import pdbparse
@@ -37,7 +37,7 @@ class DebuggerApp(DebugCore.Debugger):
         super().__init__()
 
         self._root = tk.Tk()
-        self._root.title("DebugCore")
+        self._root.title("josKDbg")
         self._root.config(bg="pink")
         # for now
         self._root.resizable(False, False)
@@ -115,12 +115,20 @@ class DebuggerApp(DebugCore.Debugger):
         self._asm_formatter = iced_x86.Formatter(iced_x86.FormatterSyntax.NASM)
         self._symbol_lookup = None
         self._pdb_path = ''
+        self._target_memory_request_queue = []
+
+    __TM_REQUEST_CODE = 1
+    __TM_REQUEST_DATA = 2
 
     def _on_target_memory_read(self, packet):
-        self._disassemble_bytes_impl(packet, self._last_bp_packet.stack.rip)
+        request, at = self._target_memory_request_queue.pop()
+        if request == self.__TM_REQUEST_CODE:
+            self._disassemble_bytes_impl(packet, at)
+        else:
+            self._dump_memory_bytes(packet, at)
 
     def _on_cli_enter(self, e):
-        cmd = self._input.get()
+        cmd = self._input.get().lstrip()
         next_input_state = ''
         self._cli_history.append(cmd)
         if self._state == self._STATE_BREAK:
@@ -130,7 +138,16 @@ class DebuggerApp(DebugCore.Debugger):
             elif cmd == 'r':
                 self._dump_registers(self._last_bp_packet.stack)
             elif cmd == 'u':
+                self._target_memory_request_queue.append((self.__TM_REQUEST_CODE, self._last_bp_packet.stack.rip))
                 self.read_target_memory(self._last_bp_packet.stack.rip, 52)
+            elif cmd.startswith('d'):
+                parts = cmd.split()
+                if len(parts) > 1:
+                    target = int(parts[1])
+                else:
+                    target = self._last_bp_packet.stack.rip
+                self._target_memory_request_queue.append((self.__TM_REQUEST_DATA, target))
+                self.read_target_memory(target, 8*16)
             elif cmd == 'p':
                 self.single_step()
             # elif cmd == '~':
@@ -148,9 +165,38 @@ class DebuggerApp(DebugCore.Debugger):
                 self.update()
                 self._root.update_idletasks()
                 self._root.update()
-                time.sleep(0.1)
         except Exception as e:
             print(f'disconnecting : {str(e)}')
+
+    def _dump_memory_bytes(self, raw_bytes, at):
+        self._output_window.insert(tk.INSERT, '\n')
+        runs = len(raw_bytes) // 16
+        i = 0
+        # TODO: this is dumb and slow, surely there's a much more pythonic way to do this faster...?
+        for j in range(runs):
+            run = raw_bytes[i:i + 16]
+            literal = ''
+            bytes_str = run.hex(' ').lower()
+            for b in run:
+                if 32 <= b < 127:
+                    literal = literal + chr(b)
+                else:
+                    literal = literal + '.'
+            # literal = re.sub(f'[^{re.escape(string.printable)}]', '.', run)
+            self._output_window.insert(tk.END, f'{at:016x} {bytes_str}    {literal}\n')
+            i = i + 16
+        rem = len(raw_bytes) % 16
+        if rem:
+            run = raw_bytes[i:i + rem]
+            bytes_str = run.hex(' ').lower()
+            literal = ''
+            for b in run:
+                if 32 <= b < 127:
+                    literal = literal + chr(b)
+                else:
+                    literal = literal + '.'
+            bytes_str = bytes_str.ljust(3*16 - 1, ' ')
+            self._output_window.insert(tk.END, f'{at:016x} {bytes_str}    {literal}\n')
 
     def _disassemble_output_instruction(self, instr: iced_x86.Instruction, bytes_str: str, disasm: str,
                                         lookup_calls: bool):
@@ -189,9 +235,11 @@ class DebuggerApp(DebugCore.Debugger):
                 if call_target != 0:
                     lookup = self._symbol_lookup.lookup(call_target)
                     disasm = disasm + ' ==> ' + lookup
-        self._output_window.insert(tk.END, f'\n{instr.ip:016X} {bytes_str:30} {disasm}')
+        self._output_window.insert(tk.END, f'{instr.ip:016x} {bytes_str:30} {disasm}\n')
 
     def _disassemble_bytes_impl(self, raw_bytes, at):
+        lookup = self._symbol_lookup.lookup(at)
+        self._output_window.insert(tk.INSERT, f'\n{lookup}:\n')
         decoder = iced_x86.Decoder(64, raw_bytes, ip=at)
         line = 0
         for instr in decoder:
@@ -202,13 +250,24 @@ class DebuggerApp(DebugCore.Debugger):
             bytes_str = raw_bytes[start_index:start_index + instr.len].hex().lower()
             self._disassemble_output_instruction(instr, bytes_str, disasm, False)
             line = line + 1
-        self._output_window.insert(tk.END, f'\n\n')
 
     def _on_connect_impl(self, kernel_info_json):
-        print('>connected: ' + str(kernel_info_json))
         image_info = kernel_info_json['image_info']
         from pdbparse.symlookup import Lookup
-        self._pdb_lookup_info = [(self._pdb_path, image_info['base'])]
+        base = image_info['base']
+        entry_point = image_info['entry_point']
+        self._pdb_lookup_info = [(self._pdb_path, base)]
+        version_str = str(kernel_info_json['version']['major']) +\
+                      '.' + \
+                      str(kernel_info_json['version']['minor']) + \
+                      '.' + \
+                      str(kernel_info_json['version']['patch'])
+        self._output_window.insert(tk.END, f'\nconnected to kernel {version_str}, base is @ {hex(base)}, '
+                                           f'entry point @ {hex(entry_point)}\n')
+        self._output_window.insert(tk.END, 'kernel reports available RAM ' +
+                                   str(kernel_info_json['system_info']['memory'])
+                                   + ', and '
+                                   + str(kernel_info_json['system_info']['processors']) + ' processors\n\n')
 
     def _dump_registers(self, stack):
         self._output_window.insert(tk.INSERT,
@@ -248,25 +307,20 @@ class DebuggerApp(DebugCore.Debugger):
                 from pdbparse.symlookup import Lookup
                 self._symbol_lookup = Lookup(self._pdb_lookup_info)
             lookup = self._symbol_lookup.lookup(self._last_bp_packet.stack.rip)
-            self._output_window.insert(tk.INSERT, f'\n>break - code @ {lookup}')
+            self._output_window.insert(tk.INSERT, f'\n>break - code @ {lookup}\n')
             raw_bytes = bytearray(self._last_bp_packet.instruction)
             instr = iced_x86.Decoder(64, raw_bytes, ip=self._last_bp_packet.stack.rip).decode()
             disasm = self._asm_formatter.format(instr)
             bytes_str = raw_bytes[:instr.len].hex().lower()
             self._disassemble_output_instruction(instr, bytes_str, disasm, True)
-            self._output_window.insert(tk.END, f'\n\n')
             self._cli.configure(state=tk.NORMAL)
             self._input.set('')
         except Exception as e:
             print(str(e))
 
-    def _on_bp_impl(self, at, bp_packet):
-        self._output_window.insert(tk.INSERT, f'\n>breakpoint @ {hex(at)}')
-        self._dump_bp_info(bp_packet)
-
-    def _on_gpf_impl(self, at, bp_packet):
-        self._output_window.insert(tk.INSERT, f'\n>#GPF @ {hex(at)}!!!!')
-        self._dump_bp_info(bp_packet)
+    def _on_gpf(self):
+        # TODO:
+        self._on_breakpoint()
 
     def _process_trace_queue_impl(self, trace_queue: queue.Queue):
         while not trace_queue.empty():
