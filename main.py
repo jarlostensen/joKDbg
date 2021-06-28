@@ -121,6 +121,12 @@ def test_pdb_load():
 
 
 class DebuggerApp(josKDbg.Debugger):
+
+    __BASE_FONT = ('Consolas', 9)
+    __DARK_BG = 'gray20'
+    __DARK_FG = 'lightgray'
+    __DARK_FRAME_BG = 'gray30'
+
     def __init__(self):
         super().__init__()
 
@@ -137,9 +143,10 @@ class DebuggerApp(josKDbg.Debugger):
         self._trace_frame = tk.LabelFrame(self._top_pane, width=500, text="Trace")
         self._trace_frame.pack(fill=tk.BOTH, expand=True, side=tk.RIGHT)
         self._trace_frame.pack_propagate(0)
-        self._trace_pane = tk.Frame(self._trace_frame, bg='blue')
+        self._trace_pane = tk.Frame(self._trace_frame, bg=self.__DARK_FRAME_BG)
         self._trace_pane.pack(fill=tk.BOTH, expand=True, side=tk.RIGHT)
-        self._trace_window = tk.Text(self._trace_pane, wrap=tk.WORD)
+        self._trace_window = tk.Text(self._trace_pane, wrap=tk.WORD, font=self.__BASE_FONT,
+                                     bg=self.__DARK_BG, fg=self.__DARK_FG)
         self._trace_window.pack(fill=tk.BOTH, expand=True, side=tk.LEFT, padx=4, pady=4)
         # self._trace_window['state'] = 'disabled'
         self._trace_sb = tk.Scrollbar(self._trace_window)
@@ -151,9 +158,10 @@ class DebuggerApp(josKDbg.Debugger):
         self._output_frame = tk.LabelFrame(self._top_pane, width=700, text="Command")
         self._output_frame.pack(fill=tk.BOTH, expand=True, side=tk.LEFT)
         self._output_frame.pack_propagate(0)
-        self._output_pane = tk.Frame(self._output_frame, bg='darkgray')
+        self._output_pane = tk.Frame(self._output_frame, bg=self.__DARK_FRAME_BG)
         self._output_pane.pack(fill=tk.BOTH, expand=True, side=tk.LEFT)
-        self._output_window = tk.Text(self._output_pane, wrap=tk.WORD)
+        self._output_window = tk.Text(self._output_pane, wrap=tk.WORD, font=self.__BASE_FONT,
+                                      bg=self.__DARK_BG, fg=self.__DARK_FG)
         self._output_window.pack(fill=tk.BOTH, expand=True, side=tk.LEFT)
         self._output_sb = tk.Scrollbar(self._output_window)
         self._output_sb.pack(side=tk.RIGHT, fill=tk.BOTH)
@@ -177,6 +185,12 @@ class DebuggerApp(josKDbg.Debugger):
         self._input = tk.StringVar()
         self._cli = tk.Entry(self._cli_frame, text=self._input)
         self._cli.pack(side=tk.LEFT, fill=tk.BOTH, padx=2, expand=True)
+        self._cli.bind('<Return>', self._on_cli_enter)
+
+    def _on_cli_enter(self, e):
+        if 'g' in self._input.get() and self._state == self._STATE_BREAK:
+            self._conn.send_kernel_continue()
+            self._input = ''
 
     def run(self):
         try:
