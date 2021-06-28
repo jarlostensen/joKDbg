@@ -127,27 +127,35 @@ class DebuggerApp(josKDbg.Debugger):
     __DARK_FG = 'lightgray'
     __DARK_FRAME_BG = 'gray30'
 
+    __TOP_PANE_HEIGHT = 600
+    __BOTTOM_PANE_HEIGHT = 300
+    __PANEL_WIDTH = 500 + 728
+
     def __init__(self):
         super().__init__()
 
         self._root = tk.Tk()
         self._root.title("josKDbg")
         self._root.config(bg="pink")
+        # for now
+        self._root.resizable(False, False)
 
         # top
-        self._top_pane = tk.Frame(self._root, height=900, width=1200, bg='green')
+        self._top_pane = tk.Frame(self._root, height=self.__TOP_PANE_HEIGHT, width=self.__PANEL_WIDTH,
+                                  bg=self.__DARK_FRAME_BG)
         self._top_pane.pack(fill=tk.BOTH, expand=True, side=tk.TOP)
         self._top_pane.pack_propagate(0)
 
         # trace
-        self._trace_frame = tk.LabelFrame(self._top_pane, width=500, text="Trace")
+        self.__trace_frame_width = self.__PANEL_WIDTH/3
+        self._trace_frame = tk.LabelFrame(self._top_pane, width=self.__trace_frame_width, text="Trace")
         self._trace_frame.pack(fill=tk.BOTH, expand=True, side=tk.RIGHT)
         self._trace_frame.pack_propagate(0)
         self._trace_pane = tk.Frame(self._trace_frame, bg=self.__DARK_FRAME_BG)
         self._trace_pane.pack(fill=tk.BOTH, expand=True, side=tk.RIGHT)
         self._trace_window = tk.Text(self._trace_pane, wrap=tk.WORD, font=self.__BASE_FONT,
                                      bg=self.__DARK_BG, fg=self.__DARK_FG)
-        self._trace_window.pack(fill=tk.BOTH, expand=True, side=tk.LEFT, padx=4, pady=4)
+        self._trace_window.pack(fill=tk.BOTH, expand=True, side=tk.LEFT)
         # self._trace_window['state'] = 'disabled'
         self._trace_sb = tk.Scrollbar(self._trace_window)
         self._trace_sb.pack(side=tk.RIGHT, fill=tk.BOTH)
@@ -155,7 +163,8 @@ class DebuggerApp(josKDbg.Debugger):
         self._trace_sb.config(command=self._trace_window.yview)
 
         # output
-        self._output_frame = tk.LabelFrame(self._top_pane, width=700, text="Command")
+        self.__output_frame_width = self.__PANEL_WIDTH - self.__trace_frame_width
+        self._output_frame = tk.LabelFrame(self._top_pane, width=self.__output_frame_width, text="Command")
         self._output_frame.pack(fill=tk.BOTH, expand=True, side=tk.LEFT)
         self._output_frame.pack_propagate(0)
         self._output_pane = tk.Frame(self._output_frame, bg=self.__DARK_FRAME_BG)
@@ -169,15 +178,25 @@ class DebuggerApp(josKDbg.Debugger):
         self._output_sb.config(command=self._output_window.yview)
 
         # bottom
-        self._bottom_pane = tk.Frame(self._root, width=1024, height=124, bg='yellow')
+        self._bottom_pane = tk.Frame(self._root, height=self.__BOTTOM_PANE_HEIGHT, bg=self.__DARK_FRAME_BG)
         self._bottom_pane.pack(fill=tk.BOTH, expand=True, side=tk.BOTTOM)
         self._bottom_pane.pack_propagate(0)
 
-        self._stack_frame = tk.LabelFrame(self._bottom_pane, text='Stack')
+        # cli pane sits between top and bottom pane, strictly
+        self._bottom_top_pane = tk.Frame(self._root, bg=self.__DARK_FRAME_BG)
+        self._bottom_top_pane.pack(fill=tk.X, expand=True, side=tk.BOTTOM)
+
+        self._bottom_bottom_pane = tk.Frame(self._bottom_pane, bg=self.__DARK_FRAME_BG)
+        self._bottom_bottom_pane.pack(fill=tk.BOTH, expand=True, side=tk.BOTTOM)
+
+        self._cli_frame = tk.LabelFrame(self._bottom_top_pane, text='CMD')
+        self._cli_frame.pack(fill=tk.BOTH, expand=True, side=tk.TOP)
+
+        self._stack_frame = tk.LabelFrame(self._bottom_bottom_pane, text='Stack')
         self._stack_frame.pack(fill=tk.BOTH, expand=True, side=tk.RIGHT)
 
-        self._cli_frame = tk.LabelFrame(self._bottom_pane, text='CMD')
-        self._cli_frame.pack(fill=tk.BOTH, expand=True, side=tk.LEFT)
+        self._locals_frame = tk.LabelFrame(self._bottom_bottom_pane, text='Locals')
+        self._locals_frame.pack(fill=tk.BOTH, expand=True, side=tk.RIGHT)
 
         # CLI input window
         self._prompt = tk.Label(self._cli_frame, text="> ")
