@@ -1,6 +1,7 @@
 """
 This is a sandbox of experimental code to use and refine the DebugCore Debugger module
 """
+import ctypes
 import time
 import pefile
 
@@ -48,7 +49,7 @@ class DebuggerApp(DebugCore.Debugger):
         self._top_pane.pack_propagate(0)
 
         # trace
-        self.__trace_frame_width = self.__PANEL_WIDTH/3
+        self.__trace_frame_width = self.__PANEL_WIDTH / 3
         self._trace_frame = tk.LabelFrame(self._top_pane, width=self.__trace_frame_width, text="Trace")
         self._trace_frame.pack(fill=tk.BOTH, expand=True, side=tk.RIGHT)
         self._trace_frame.pack_propagate(0)
@@ -111,9 +112,10 @@ class DebuggerApp(DebugCore.Debugger):
 
         # other internals
         self._cli_history = []
+        self._asm_formatter = iced_x86.Formatter(iced_x86.FormatterSyntax.NASM)
 
     def _on_target_memory_read(self, packet):
-        self._disassemble_bytes_impl(packet, self._last_stack.rip)
+        self._disassemble_bytes_impl(packet, self._last_bp_packet.stack.rip)
 
     def _on_cli_enter(self, e):
         cmd = self._input.get()
@@ -124,11 +126,16 @@ class DebuggerApp(DebugCore.Debugger):
                 next_input_state = self.__DEBUGGER_NOT_CONNECTED_MSG
                 self.continue_execution()
             elif cmd == 'r':
-                self._dump_registers(self._last_stack)
+                self._dump_registers(self._last_bp_packet.stack)
             elif cmd == 'u':
-                self.read_target_memory(self._last_stack.rip, 52)
+                self.read_target_memory(self._last_bp_packet.rip, 52)
+            elif cmd == 'p':
+                self.single_step()
+            # elif cmd == '~':
+            #    self._cli_state = self.__CLI_STATE_TASKS
+            #    self.get_task_list()
         self._input.set(next_input_state)
-        if len(next_input_state) > 0:
+        if self._state == self._STATE_WAITING:
             self._cli.configure(state=tk.DISABLED)
 
     def run(self):
@@ -144,12 +151,11 @@ class DebuggerApp(DebugCore.Debugger):
 
     def _disassemble_bytes_impl(self, raw_bytes, at):
         decoder = iced_x86.Decoder(64, raw_bytes, ip=at)
-        formatter = iced_x86.Formatter(iced_x86.FormatterSyntax.NASM)
         line = 0
         for instr in decoder:
-            disasm = formatter.format(instr)
+            disasm = self._asm_formatter.format(instr)
             start_index = instr.ip - at
-            bytes_str = raw_bytes[start_index:start_index + instr.len].hex().upper()
+            bytes_str = raw_bytes[start_index:start_index + instr.len].hex().lower()
             if line == 5 or 'bad' in disasm:
                 break
             self._output_window.insert(tk.END, f"\n{instr.ip:016X} {bytes_str:30} {disasm}")
@@ -195,12 +201,20 @@ class DebuggerApp(DebugCore.Debugger):
         self._output_window.insert(tk.INSERT, '\n')
 
     def _on_breakpoint(self):
-        from pdbparse.symlookup import Lookup
-        lobj = Lookup(self._pdb_lookup_info)
-        lookup = lobj.lookup(self._last_stack.rip)
-        self._output_window.insert(tk.INSERT, f'\n>break - code @ {lookup}')
-        self._cli.configure(state=tk.NORMAL)
-        self._input.set('')
+        try:
+            from pdbparse.symlookup import Lookup
+            lobj = Lookup(self._pdb_lookup_info)
+            lookup = lobj.lookup(self._last_bp_packet.stack.rip)
+            self._output_window.insert(tk.INSERT, f'\n>break - code @ {lookup}')
+            raw_bytes = bytearray(self._last_bp_packet.instruction)
+            instr = iced_x86.Decoder(64, raw_bytes, ip=self._last_bp_packet.stack.rip).decode()
+            disasm = self._asm_formatter.format(instr)
+            bytes_str = raw_bytes[:instr.len].hex().lower()
+            self._output_window.insert(tk.END, f"\n{instr.ip:016X} {bytes_str:30} {disasm}")
+            self._cli.configure(state=tk.NORMAL)
+            self._input.set('')
+        except Exception as e:
+            print(str(e))
 
     def _on_bp_impl(self, at, bp_packet):
         self._output_window.insert(tk.INSERT, f'\n>breakpoint @ {hex(at)}')

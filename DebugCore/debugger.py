@@ -23,7 +23,7 @@ class Debugger:
         self._rw_thread = None
         self._disconnected = True
         self._state = self._STATE_WAITING
-        self._last_stack = None
+        self._last_bp_packet = None
 
     def _rw_thread_func(self):
         try:
@@ -77,9 +77,20 @@ class Debugger:
     def read_target_memory(self, at, count):
         self._send_queue.put((READ_TARGET_MEMORY, (at, count)))
 
+    def get_task_list(self):
+        self._send_queue.put(GET_TASK_LIST)
+
     def continue_execution(self):
         if self._state == self._STATE_BREAK:
             self._conn.send_kernel_continue()
+            self._state == self._STATE_WAITING
+        else:
+            raise Exception("not in breakpoint")
+
+    def single_step(self):
+        if self._state == self._STATE_BREAK:
+            self._conn.send_kernel_single_step()
+            self._state == self._STATE_WAITING
         else:
             raise Exception("not in breakpoint")
 
@@ -90,13 +101,12 @@ class Debugger:
             try:
                 packet_id, packet = self._command_queue.get_nowait()
                 if packet_id == INT3:
-                    bp_packet = DebuggerBpPacket.from_buffer_copy(packet)
-                    self._last_stack = bp_packet.stack
+                    self._last_bp_packet = DebuggerBpPacket.from_buffer_copy(packet)
                     self._on_breakpoint()
                     self._state = self._STATE_BREAK
                 elif packet_id == GPF:
                     bp_packet = DebuggerBpPacket.from_buffer_copy(packet)
-                    self._last_stack = bp_packet.stack
+                    self._last_bp_packet = bp_packet
                     self._state = self._STATE_GPF
                 self._command_queue.task_done()
             except queue.Empty:

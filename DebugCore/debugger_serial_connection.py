@@ -35,6 +35,9 @@ class DebuggerSerialConnection:
     def send_kernel_continue(self):
         self._send_kernel_packet_header(CONTINUE, 0)
 
+    def send_kernel_single_step(self):
+        self._send_kernel_packet_header(SINGLE_STEP, 0)
+
     def send_kernel_read_target_memory(self, address, length):
         if length <= 0:
             raise Exception('can\'t read <=0 bytes from target')
