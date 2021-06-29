@@ -94,6 +94,9 @@ class Debugger:
         else:
             raise Exception("not in breakpoint")
 
+    def get_page_info(self, at):
+        self._conn._send_kernel_get_page_info(at)
+
     def update(self):
         if self._disconnected:
             raise Exception("debugger disconnected")
@@ -108,6 +111,9 @@ class Debugger:
                     self._last_bp_packet = DebuggerBpPacket.from_buffer_copy(packet)
                     self._state = self._STATE_GPF
                     self._on_gpf()
+                elif packet_id == ASSERT:
+                    import json
+                    self._on_assert(json.loads(packet.decode('utf-8')))
                 self._command_queue.task_done()
             except queue.Empty:
                 # timed out

@@ -50,7 +50,10 @@ class DebuggerBpPacket(ctypes.LittleEndianStructure):
     _pack_ = 1
     _fields_ = [
         ('stack', InterruptStackFrame),
-        ('instruction', ctypes.c_uint8 * 15)
+        ('instruction', ctypes.c_uint8 * 15),
+        ('cr0', ctypes.c_uint64),
+        ('cr3', ctypes.c_uint64),
+        ('cr4', ctypes.c_uint64)
     ]
 
 

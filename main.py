@@ -73,6 +73,7 @@ class DebuggerApp(DebugCore.Debugger):
         self._output_pane.pack(fill=tk.BOTH, expand=True, side=tk.LEFT)
         self._output_window = tk.Text(self._output_pane, wrap=tk.WORD, font=self.__BASE_FONT,
                                       bg=self.__DARK_BG, fg=self.__DARK_FG)
+        self._output_window.tag_configure('assert', foreground='red')
         self._output_window.pack(fill=tk.BOTH, expand=True, side=tk.LEFT)
         self._output_sb = tk.Scrollbar(self._output_window)
         self._output_sb.pack(side=tk.RIGHT, fill=tk.BOTH)
@@ -88,19 +89,9 @@ class DebuggerApp(DebugCore.Debugger):
         self._bottom_top_pane = tk.Frame(self._root, bg=self.__DARK_FRAME_BG)
         self._bottom_top_pane.pack(fill=tk.X, expand=True, side=tk.BOTTOM)
 
-        self._bottom_bottom_pane = tk.Frame(self._bottom_pane, bg=self.__DARK_FRAME_BG)
-        self._bottom_bottom_pane.pack(fill=tk.BOTH, expand=True, side=tk.BOTTOM)
-
+        # CLI input window
         self._cli_frame = tk.LabelFrame(self._bottom_top_pane, text='CMD')
         self._cli_frame.pack(fill=tk.BOTH, expand=True, side=tk.TOP)
-
-        self._stack_frame = tk.LabelFrame(self._bottom_bottom_pane, text='Stack')
-        self._stack_frame.pack(fill=tk.BOTH, expand=True, side=tk.RIGHT)
-
-        self._locals_frame = tk.LabelFrame(self._bottom_bottom_pane, text='Locals')
-        self._locals_frame.pack(fill=tk.BOTH, expand=True, side=tk.RIGHT)
-
-        # CLI input window
         self._prompt = tk.Label(self._cli_frame, text="> ")
         self._prompt.pack(side=tk.LEFT)
         self._input = tk.StringVar()
@@ -109,6 +100,16 @@ class DebuggerApp(DebugCore.Debugger):
         self._cli.bind('<Return>', self._on_cli_enter)
         self._input.set(self.__DEBUGGER_NOT_CONNECTED_MSG)
         self._cli.configure(state=tk.DISABLED)
+        self._bottom_top_pane.pack_propagate(0)
+
+        self._bottom_bottom_pane = tk.Frame(self._bottom_pane, bg=self.__DARK_FRAME_BG)
+        self._bottom_bottom_pane.pack(fill=tk.BOTH, expand=True, side=tk.BOTTOM)
+
+        self._stack_frame = tk.LabelFrame(self._bottom_bottom_pane, text='Stack')
+        self._stack_frame.pack(fill=tk.BOTH, expand=True, side=tk.RIGHT)
+
+        self._locals_frame = tk.LabelFrame(self._bottom_bottom_pane, text='Locals')
+        self._locals_frame.pack(fill=tk.BOTH, expand=True, side=tk.RIGHT)
 
         # other internals
         self._cli_history = []
@@ -127,6 +128,15 @@ class DebuggerApp(DebugCore.Debugger):
         else:
             self._dump_memory_bytes(packet, at)
 
+    def _on_assert(self, json_data):
+        import json
+        assert_obj = json_data['assert']
+        cond = assert_obj['cond']
+        file = assert_obj['file']
+        line = assert_obj['line']
+        self._output_window.insert(tk.END, f'\nASSERT:\n\t{cond}\n\tin {file} @ line {line}\n'
+                                           f'EXECUTION WILL NOT CONTINUE', 'assert')
+
     def _on_cli_enter(self, e):
         cmd = self._input.get().lstrip()
         next_input_state = ''
@@ -136,7 +146,7 @@ class DebuggerApp(DebugCore.Debugger):
                 next_input_state = self.__DEBUGGER_NOT_CONNECTED_MSG
                 self.continue_execution()
             elif cmd == 'r':
-                self._dump_registers(self._last_bp_packet.stack)
+                self._dump_registers(self._last_bp_packet)
             elif cmd == 'u':
                 self._target_memory_request_queue.append((self.__TM_REQUEST_CODE, self._last_bp_packet.stack.rip))
                 self.read_target_memory(self._last_bp_packet.stack.rip, 52)
@@ -150,6 +160,9 @@ class DebuggerApp(DebugCore.Debugger):
                 self.read_target_memory(target, 8*16)
             elif cmd == 'p':
                 self.single_step()
+            # TODO: TESTING
+            elif cmd == 'pt':
+                self.get_page_info(self._last_bp_packet.stack.rip)
             # elif cmd == '~':
             #    self._cli_state = self.__CLI_STATE_TASKS
             #    self.get_task_list()
@@ -269,35 +282,38 @@ class DebuggerApp(DebugCore.Debugger):
                                    + ', and '
                                    + str(kernel_info_json['system_info']['processors']) + ' processors\n\n')
 
-    def _dump_registers(self, stack):
+    def _dump_registers(self, bp_packet):
         self._output_window.insert(tk.INSERT,
-                                   f'\nrax {stack.rax:016x} rbx {stack.rbx:016x} rcx '
-                                   f'{stack.rcx:016x} rdx {stack.rdx:016x}')
+                                   f'\nrax {bp_packet.stack.rax:016x} rbx {bp_packet.stack.rbx:016x} rcx '
+                                   f'{bp_packet.stack.rcx:016x} rdx {bp_packet.stack.rdx:016x}')
         self._output_window.insert(tk.INSERT,
-                                   f'\nrsi {stack.rsi:016x} rdi {stack.rdi:016x} rsp '
-                                   f'{stack.rsp:016x} rbp {stack.rbp:016x}')
+                                   f'\nrsi {bp_packet.stack.rsi:016x} rdi {bp_packet.stack.rdi:016x} rsp '
+                                   f'{bp_packet.stack.rsp:016x} rbp {bp_packet.stack.rbp:016x}')
         self._output_window.insert(tk.INSERT,
-                                   f'\nr8  {stack.r8:016x} r9  {stack.r9:016x} r10 '
-                                   f'{stack.r10:016x} r11 {stack.r11:016x}')
+                                   f'\nr8  {bp_packet.stack.r8:016x} r9  {bp_packet.stack.r9:016x} r10 '
+                                   f'{bp_packet.stack.r10:016x} r11 {bp_packet.stack.r11:016x}')
         self._output_window.insert(tk.INSERT,
-                                   f'\nr12 {stack.r12:016x} r13 {stack.r13:016x} r14 '
-                                   f'{stack.r14:016x} r15 {stack.r15:016x}')
+                                   f'\nr12 {bp_packet.stack.r12:016x} r13 {bp_packet.stack.r13:016x} r14 '
+                                   f'{bp_packet.stack.r14:016x} r15 {bp_packet.stack.r15:016x}')
         self._output_window.insert(tk.INSERT,
-                                   f'\nrflags {stack.rflags:08x} cs {stack.cs:02x} ss '
-                                   f'{stack.ss:02x}\n')
-        if stack.rflags & (1 << 0) != 0:
+                                   f'\nrflags {bp_packet.stack.rflags:08x} cs {bp_packet.stack.cs:02x} ss '
+                                   f'{bp_packet.stack.ss:02x}\n')
+        self._output_window.insert(tk.INSERT,
+                                   f'\ncr0 {bp_packet.cr0:08x} cr3 {bp_packet.cr3:08x} cr4 '
+                                   f'{bp_packet.cr4:08x}\n')
+        if bp_packet.stack.rflags & (1 << 0) != 0:
             self._output_window.insert(tk.INSERT, 'CF ')
-        if stack.rflags & (1 << 6) != 0:
+        if bp_packet.stack.rflags & (1 << 6) != 0:
             self._output_window.insert(tk.INSERT, 'ZF ')
-        if stack.rflags & (1 << 7) != 0:
+        if bp_packet.stack.rflags & (1 << 7) != 0:
             self._output_window.insert(tk.INSERT, 'SF ')
-        if stack.rflags & (1 << 8) != 0:
+        if bp_packet.stack.rflags & (1 << 8) != 0:
             self._output_window.insert(tk.INSERT, 'TF ')
-        if stack.rflags & (1 << 9) != 0:
+        if bp_packet.stack.rflags & (1 << 9) != 0:
             self._output_window.insert(tk.INSERT, 'IF ')
-        if stack.rflags & (1 << 10) != 0:
+        if bp_packet.stack.rflags & (1 << 10) != 0:
             self._output_window.insert(tk.INSERT, 'DF ')
-        if stack.rflags & (1 << 11) != 0:
+        if bp_packet.stack.rflags & (1 << 11) != 0:
             self._output_window.insert(tk.INSERT, 'OF ')
         self._output_window.insert(tk.INSERT, '\n')
 
@@ -313,6 +329,7 @@ class DebuggerApp(DebugCore.Debugger):
             disasm = self._asm_formatter.format(instr)
             bytes_str = raw_bytes[:instr.len].hex().lower()
             self._disassemble_output_instruction(instr, bytes_str, disasm, True)
+            # allow input
             self._cli.configure(state=tk.NORMAL)
             self._input.set('')
         except Exception as e:
@@ -323,9 +340,11 @@ class DebuggerApp(DebugCore.Debugger):
         self._on_breakpoint()
 
     def _process_trace_queue_impl(self, trace_queue: queue.Queue):
+        self._trace_window.configure(state=tk.NORMAL)
         while not trace_queue.empty():
             self._trace_window.insert(tk.END, f'\n{trace_queue.get_nowait()}')
         trace_queue.task_done()
+        self._trace_window.configure(state=tk.DISABLED)
 
 
 if __name__ == '__main__':
