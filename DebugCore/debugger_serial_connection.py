@@ -2,7 +2,7 @@ import sys
 import json
 import ctypes
 from typing import Tuple
-from .debugger_packets import DebuggerSerialPacket, DebuggerReadTargetMemoryPacket
+from .debugger_packets import *
 from .debugger_commands import *
 
 
@@ -32,6 +32,11 @@ class DebuggerSerialConnection:
         self._send_packet_impl(ctypes.cast(ctypes.byref(packet),
                                            ctypes.POINTER(ctypes.c_char * ctypes.sizeof(packet))).contents.raw)
 
+    def _send_kernel_packet(self, packet_id, packet_data):
+        self._send_kernel_packet_header(packet_id, ctypes.sizeof(packet_data))
+        self._send_packet_impl(ctypes.cast(ctypes.byref(packet_data),
+                                           ctypes.POINTER(ctypes.c_char * ctypes.sizeof(packet_data))).contents.raw)
+
     def send_kernel_continue(self):
         self._send_kernel_packet_header(CONTINUE, 0)
 
@@ -51,6 +56,17 @@ class DebuggerSerialConnection:
     def send_kernel_get_task_list(self):
         self._send_kernel_packet_header(GET_TASK_LIST, 0)
 
+    def send_kernel_traverse_page_table(self, at):
+        pt_packet = DebuggerTraversePageTablePacket()
+        pt_packet.address = at
+        self._send_kernel_packet_header(TRAVERSE_PAGE_TABLE, ctypes.sizeof(pt_packet))
+        self._send_packet_impl(ctypes.cast(ctypes.byref(pt_packet),
+                                           ctypes.POINTER(ctypes.c_char * ctypes.sizeof(pt_packet))).contents.raw)
+
+    def send_kernel_read_msr(self, msr):
+        rdmsr_packet = DebuggerRDMSRPacket()
+        rdmsr_packet.msr = msr
+        self._send_kernel_packet(READ_MSR, rdmsr_packet)
 
 def debugger_serial_pipe_connection_factory():
     if sys.platform == 'win32':

@@ -16,6 +16,12 @@ import queue
 import tkinter as tk
 
 
+def _convert_input_number(literal: str):
+    if literal.lower().startswith('0x'):
+        return int(literal, 16)
+    return int(literal)
+
+
 class DebuggerApp(DebugCore.Debugger):
     """
     The main debugger application
@@ -89,9 +95,19 @@ class DebuggerApp(DebugCore.Debugger):
         self._bottom_top_pane = tk.Frame(self._root, bg=self.__DARK_FRAME_BG)
         self._bottom_top_pane.pack(fill=tk.X, expand=True, side=tk.BOTTOM)
 
-        # CLI input window
+        self._bottom_bottom_pane = tk.Frame(self._bottom_pane, bg=self.__DARK_FRAME_BG)
+        self._bottom_bottom_pane.pack(fill=tk.BOTH, expand=True, side=tk.BOTTOM)
+
         self._cli_frame = tk.LabelFrame(self._bottom_top_pane, text='CMD')
         self._cli_frame.pack(fill=tk.BOTH, expand=True, side=tk.TOP)
+
+        self._stack_frame = tk.LabelFrame(self._bottom_bottom_pane, text='Stack')
+        self._stack_frame.pack(fill=tk.BOTH, expand=True, side=tk.RIGHT)
+
+        self._locals_frame = tk.LabelFrame(self._bottom_bottom_pane, text='Locals')
+        self._locals_frame.pack(fill=tk.BOTH, expand=True, side=tk.RIGHT)
+
+        # CLI input window
         self._prompt = tk.Label(self._cli_frame, text="> ")
         self._prompt.pack(side=tk.LEFT)
         self._input = tk.StringVar()
@@ -100,16 +116,6 @@ class DebuggerApp(DebugCore.Debugger):
         self._cli.bind('<Return>', self._on_cli_enter)
         self._input.set(self.__DEBUGGER_NOT_CONNECTED_MSG)
         self._cli.configure(state=tk.DISABLED)
-        self._bottom_top_pane.pack_propagate(0)
-
-        self._bottom_bottom_pane = tk.Frame(self._bottom_pane, bg=self.__DARK_FRAME_BG)
-        self._bottom_bottom_pane.pack(fill=tk.BOTH, expand=True, side=tk.BOTTOM)
-
-        self._stack_frame = tk.LabelFrame(self._bottom_bottom_pane, text='Stack')
-        self._stack_frame.pack(fill=tk.BOTH, expand=True, side=tk.RIGHT)
-
-        self._locals_frame = tk.LabelFrame(self._bottom_bottom_pane, text='Locals')
-        self._locals_frame.pack(fill=tk.BOTH, expand=True, side=tk.RIGHT)
 
         # other internals
         self._cli_history = []
@@ -137,6 +143,48 @@ class DebuggerApp(DebugCore.Debugger):
         self._output_window.insert(tk.END, f'\nASSERT:\n\t{cond}\n\tin {file} @ line {line}\n'
                                            f'EXECUTION WILL NOT CONTINUE', 'assert')
 
+    def _on_get_pagetable_info(self, table_info):
+        self._output_window.insert(tk.END, f'\npagetable info for {hex(table_info.address)}:\n')
+        pml4e = table_info.entries[0]
+        pdpte = table_info.entries[1]
+        if (pdpte & 1) == 0:
+            self._output_window.insert(tk.END, f'\tNOT PRESENT\n')
+        else:
+            if pdpte & (1 << 7):
+                # 1GB pages
+                phys_base = pdpte & ~0x1ff
+                flags = pdpte & 0xfff
+                self._output_window.insert(tk.END, f'\t(1GB page): phys @ '
+                                                   f'{hex(phys_base + (table_info.address & 0x3fffffff))}'
+                                                   f' flags {hex(flags)}\n')
+            else:
+                pde = table_info.entries[2]
+                if (pde & 1) == 0:
+                    self._output_window.insert(tk.END, f'\tNOT PRESENT\n')
+                else:
+                    if pde & (1 << 7):
+                        # 2MB pages
+                        phys_base = pde & ~0x1ff
+                        flags = pde & 0xfff
+                        self._output_window.insert(tk.END, f'\t(2MB page): phys @ '
+                                                           f'{hex(phys_base + (table_info.address & 0x1fffff))}'
+                                                           f' flags {hex(flags)}\n')
+                    else:
+                        # 4KB pages
+                        pte = table_info.entries[3]
+                        if (pte & 1) == 0:
+                            self._output_window.insert(tk.END, f'\tNOT PRESENT\n')
+                        else:
+                            phys_base = pte & ~0x1ff
+                            flags = pte & 0xfff
+                            self._output_window.insert(tk.END, f'\t(4KB page): phys @ '
+                                                               f'{hex(phys_base + (table_info.address & 0xfff))}'
+                                                               f' flags {hex(flags)}\n')
+
+    def _on_read_msr(self, msr_packet):
+        self._output_window.insert(tk.END, f'\nMSR info for {hex(msr_packet.msr)}, '
+                                           f'lo: {hex(msr_packet.lo)} hi: {hex(msr_packet.hi)}\n')
+
     def _on_cli_enter(self, e):
         cmd = self._input.get().lstrip()
         next_input_state = ''
@@ -153,16 +201,24 @@ class DebuggerApp(DebugCore.Debugger):
             elif cmd.startswith('d'):
                 parts = cmd.split()
                 if len(parts) > 1:
-                    target = int(parts[1])
+                    target = _convert_input_number(parts[1])
                 else:
                     target = self._last_bp_packet.stack.rip
                 self._target_memory_request_queue.append((self.__TM_REQUEST_DATA, target))
                 self.read_target_memory(target, 8*16)
             elif cmd == 'p':
                 self.single_step()
-            # TODO: TESTING
-            elif cmd == 'pt':
-                self.get_page_info(self._last_bp_packet.stack.rip)
+            elif cmd.startswith('.pt'):
+                parts = cmd.split()
+                if len(parts) > 1:
+                    target = _convert_input_number(parts[1])
+                else:
+                    target = self._last_bp_packet.stack.rip
+                self.traverse_pagetable(target)
+            elif cmd.startswith('.rdmsr'):
+                parts = cmd.split()
+                if len(parts) > 1:
+                    self.read_msr(_convert_input_number(parts[1]))
             # elif cmd == '~':
             #    self._cli_state = self.__CLI_STATE_TASKS
             #    self.get_task_list()

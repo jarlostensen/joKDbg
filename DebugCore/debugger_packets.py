@@ -88,3 +88,35 @@ class DebuggerTaskInfo(ctypes.LittleEndianStructure):
         ('entry_point', ctypes.c_uint64),
         ('stack', InterruptStackFrame)
     ]
+
+
+class DebuggerTraversePageTablePacket(ctypes.LittleEndianStructure):
+    _pack_ = 1
+    _fields_ = [
+        ('address', ctypes.c_uint64)
+    ]
+
+
+class DebuggerTraversePageTableRespPacket(ctypes.LittleEndianStructure):
+    _pack_ = 1
+    _fields_ = [
+        ('address', ctypes.c_uint64),
+        ('entries', ctypes.c_uint64 * 4)
+    ]
+
+
+class DebuggerRDMSRPacket(ctypes.LittleEndianStructure):
+    _pack_ = 1
+    _fields_ = [
+        ('msr', ctypes.c_uint32)
+    ]
+
+
+class DebuggerRDMSRespPacket(ctypes.LittleEndianStructure):
+    _pack_ = 1
+    _fields_ = [
+        ('msr', ctypes.c_uint32),
+        ('lo', ctypes.c_uint32),
+        ('hi', ctypes.c_uint32)
+    ]
+

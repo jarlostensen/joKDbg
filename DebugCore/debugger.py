@@ -2,7 +2,7 @@ import ctypes
 import time
 
 from .debugger_serial_connection import debugger_serial_pipe_connection_factory
-from .debugger_packets import DebuggerBpPacket, DebuggerGetTaskInfoHeaderPacket, DebuggerTaskInfo
+from .debugger_packets import *
 from .debugger_commands import *
 
 import queue
@@ -43,8 +43,7 @@ class Debugger:
                         # a command packet
                         self._command_queue.put((packet_id, packet), block=True, timeout=None)
                 else:
-                    # a latency of 1/10th of a second is fine for our needs
-                    time.sleep(0.1)
+                    time.sleep(0.033)
                 # writes are immediate (and technically blocking)
                 while not self._send_queue.empty():
                     packet_id, packet_data = self._send_queue.get(block=True, timeout=None)
@@ -52,6 +51,10 @@ class Debugger:
                         self._conn.send_kernel_read_target_memory(packet_data[0], packet_data[1])
                     elif packet_id == GET_TASK_LIST:
                         self._conn.send_kernel_get_task_list()
+                    elif packet_id == TRAVERSE_PAGE_TABLE:
+                        self._conn.send_kernel_traverse_page_table(packet_data)
+                    elif packet_id == READ_MSR:
+                        self._conn.send_kernel_read_msr(packet_data)
                     else:
                         pass
         except UnicodeDecodeError:
@@ -94,8 +97,11 @@ class Debugger:
         else:
             raise Exception("not in breakpoint")
 
-    def get_page_info(self, at):
-        self._conn._send_kernel_get_page_info(at)
+    def traverse_pagetable(self, at):
+        self._send_queue.put((TRAVERSE_PAGE_TABLE, at))
+
+    def read_msr(self, msr):
+        self._send_queue.put((READ_MSR, msr))
 
     def update(self):
         if self._disconnected:
@@ -123,6 +129,12 @@ class Debugger:
                 packet_id, packet = self._response_queue.get_nowait()
                 if packet_id == READ_TARGET_MEMORY_RESP:
                     self._on_target_memory_read(packet)
+                elif packet_id == TRAVERSE_PAGE_TABLE_RESP:
+                    table_info = DebuggerTraversePageTableRespPacket.from_buffer_copy(packet)
+                    self._on_get_pagetable_info(table_info)
+                elif packet_id == READ_MSR_RESP:
+                    rdmsr = DebuggerRDMSRespPacket.from_buffer_copy(packet)
+                    self._on_read_msr(rdmsr)
                 elif packet_id == GET_TASK_LIST_RESP:
                     ti_hdr_packet = DebuggerGetTaskInfoHeaderPacket.from_buffer_copy(packet)
                     print(f'''GET_TASK_LIST_RESP returned {ti_hdr_packet.num_tasks} tasks of '''
