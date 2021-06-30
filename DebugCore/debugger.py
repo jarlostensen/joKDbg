@@ -75,6 +75,12 @@ class Debugger:
         self._start_threads()
         self._on_connect_impl(self._conn.kernel_connection_info())
 
+    def state_is_waiting(self):
+        return self._state == self._STATE_WAITING
+
+    def state_is_break(self):
+        return self._state == self._STATE_BREAK
+
     def _on_target_memory_read(self, packet): pass
 
     def read_target_memory(self, at, count):

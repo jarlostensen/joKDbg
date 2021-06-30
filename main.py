@@ -128,6 +128,19 @@ class DebuggerApp(DebugCore.Debugger):
         self._output_window.insert(tk.END, text)
         self._output_window.see(tk.END)
 
+    def _print_trace(self, text):
+        self._trace_window.configure(state=tk.NORMAL)
+        self._trace_window.insert(tk.END, text)
+        self._trace_window.configure(state=tk.DISABLED)
+        self._trace_window.see(tk.END)
+
+    def _cli_disable(self):
+        self._cli.configure(state=tk.DISABLED)
+
+    def _cli_enable(self):
+        self._cli.configure(state=tk.NORMAL)
+        self._input.set('')
+
     __TM_REQUEST_CODE = 1
     __TM_REQUEST_DATA = 2
 
@@ -152,7 +165,7 @@ class DebuggerApp(DebugCore.Debugger):
         pml4e = table_info.entries[0]
         pdpte = table_info.entries[1]
         if (pdpte & 1) == 0:
-            self._output_window.insert(tk.END, f'\tNOT PRESENT\n')
+            self._print_output(f'\tNOT PRESENT\n')
         else:
             if pdpte & (1 << 7):
                 # 1GB pages
@@ -191,11 +204,13 @@ class DebuggerApp(DebugCore.Debugger):
 
     def _on_cli_enter(self, e):
         cmd = self._input.get().lstrip()
-        next_input_state = ''
         self._cli_history.append(cmd)
-        if self._state == self._STATE_BREAK:
-            if cmd == 'g':
-                next_input_state = self.__DEBUGGER_NOT_CONNECTED_MSG
+        if self.state_is_break():
+            if cmd == 'h' or cmd == '?':
+
+            elif cmd == 'g':
+                self._input.set(self.__DEBUGGER_NOT_CONNECTED_MSG)
+                self._cli_disable()
                 self.continue_execution()
             elif cmd == 'r':
                 self._dump_registers(self._last_bp_packet)
@@ -223,12 +238,6 @@ class DebuggerApp(DebugCore.Debugger):
                 parts = cmd.split()
                 if len(parts) > 1:
                     self.read_msr(_convert_input_number(parts[1]))
-            # elif cmd == '~':
-            #    self._cli_state = self.__CLI_STATE_TASKS
-            #    self.get_task_list()
-        self._input.set(next_input_state)
-        if self._state == self._STATE_WAITING:
-            self._cli.configure(state=tk.DISABLED)
 
     def run(self, pdb_path):
         self._pdb_path = pdb_path
@@ -242,7 +251,7 @@ class DebuggerApp(DebugCore.Debugger):
             print(f'disconnecting : {str(e)}')
 
     def _dump_memory_bytes(self, raw_bytes, at):
-        self._output_window.insert(tk.INSERT, '\n')
+        self._print_output('\n')
         runs = len(raw_bytes) // 16
         i = 0
         for j in range(runs):
@@ -323,12 +332,12 @@ class DebuggerApp(DebugCore.Debugger):
                       str(kernel_info_json['version']['minor']) + \
                       '.' + \
                       str(kernel_info_json['version']['patch'])
-        self._output_window.insert(tk.END, f'\nconnected to kernel {version_str}, base is @ {hex(base)}, '
-                                           f'entry point @ {hex(entry_point)}\n')
-        self._output_window.insert(tk.END, 'kernel reports available RAM ' +
-                                   str(kernel_info_json['system_info']['memory'])
-                                   + ', and '
-                                   + str(kernel_info_json['system_info']['processors']) + ' processors\n\n')
+        self._print_output(f'\nconnected to kernel {version_str}, base is @ {hex(base)}, '
+                           f'entry point @ {hex(entry_point)}\n')
+        self._print_output('kernel reports available RAM ' +
+                           str(kernel_info_json['system_info']['memory'])
+                           + ', and '
+                           + str(kernel_info_json['system_info']['processors']) + ' processors\n\n')
 
     def _dump_registers(self, bp_packet):
         self._print_output(
@@ -379,12 +388,11 @@ class DebuggerApp(DebugCore.Debugger):
             bytes_str = raw_bytes[:instr.len].hex().lower()
             self._disassemble_output_instruction(instr, bytes_str, disasm, True)
             # allow input
-            self._cli.configure(state=tk.NORMAL)
-            self._input.set('')
+            self._cli_enable()
         except Exception as e:
             print(str(e))
 
-    #TODO hook this up
+    # TODO hook this up
     def _on_pf(self):
         if self._symbol_lookup is None:
             from pdbparse.symlookup import Lookup
@@ -401,8 +409,7 @@ class DebuggerApp(DebugCore.Debugger):
         self._print_output(f'\n>PAGE FAULT - code @ {lookup}\n\t'
                            f'@ {hex(cr2)}: {flags}')
         # allow input
-        self._cli.configure(state=tk.NORMAL)
-        self._input.set('')
+        self._cli_enable()
 
     def _on_gpf(self):
         """
@@ -421,15 +428,12 @@ class DebuggerApp(DebugCore.Debugger):
         error_code = self._last_bp_packet.stack.error_code
         self._print_output(f'\n>GENERAL PROTECTION FAULT - code @ {lookup}, error code {hex(error_code)}')
         # allow input
-        self._cli.configure(state=tk.NORMAL)
-        self._input.set('')
+        self._cli_enable()
 
     def _process_trace_queue_impl(self, trace_queue: queue.Queue):
-        self._trace_window.configure(state=tk.NORMAL)
         while not trace_queue.empty():
-            self._trace_window.insert(tk.END, f'\n{trace_queue.get_nowait()}')
+            self._print_trace(f'\n{trace_queue.get_nowait()}')
         trace_queue.task_done()
-        self._trace_window.configure(state=tk.DISABLED)
 
 
 if __name__ == '__main__':
