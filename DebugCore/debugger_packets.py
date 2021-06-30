@@ -52,6 +52,7 @@ class DebuggerBpPacket(ctypes.LittleEndianStructure):
         ('stack', InterruptStackFrame),
         ('instruction', ctypes.c_uint8 * 15),
         ('cr0', ctypes.c_uint64),
+        ('cr2', ctypes.c_uint64),
         ('cr3', ctypes.c_uint64),
         ('cr4', ctypes.c_uint64)
     ]

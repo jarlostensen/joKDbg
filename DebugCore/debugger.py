@@ -117,6 +117,7 @@ class Debugger:
                     self._last_bp_packet = DebuggerBpPacket.from_buffer_copy(packet)
                     self._state = self._STATE_GPF
                     self._on_gpf()
+                    self._state = self._STATE_BREAK
                 elif packet_id == ASSERT:
                     import json
                     self._on_assert(json.loads(packet.decode('utf-8')))

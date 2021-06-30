@@ -124,6 +124,10 @@ class DebuggerApp(DebugCore.Debugger):
         self._pdb_path = ''
         self._target_memory_request_queue = []
 
+    def _print_output(self, text):
+        self._output_window.insert(tk.END, text)
+        self._output_window.see(tk.END)
+
     __TM_REQUEST_CODE = 1
     __TM_REQUEST_DATA = 2
 
@@ -140,11 +144,11 @@ class DebuggerApp(DebugCore.Debugger):
         cond = assert_obj['cond']
         file = assert_obj['file']
         line = assert_obj['line']
-        self._output_window.insert(tk.END, f'\nASSERT:\n\t{cond}\n\tin {file} @ line {line}\n'
-                                           f'EXECUTION WILL NOT CONTINUE', 'assert')
+        self._print_output(f'\nASSERT:\n\t{cond}\n\tin {file} @ line {line}\n'
+                           f'EXECUTION WILL NOT CONTINUE', 'assert')
 
     def _on_get_pagetable_info(self, table_info):
-        self._output_window.insert(tk.END, f'\npagetable info for {hex(table_info.address)}:\n')
+        self._print_output(f'\npagetable info for {hex(table_info.address)}:\n')
         pml4e = table_info.entries[0]
         pdpte = table_info.entries[1]
         if (pdpte & 1) == 0:
@@ -154,36 +158,36 @@ class DebuggerApp(DebugCore.Debugger):
                 # 1GB pages
                 phys_base = pdpte & ~0x1ff
                 flags = pdpte & 0xfff
-                self._output_window.insert(tk.END, f'\t(1GB page): phys @ '
-                                                   f'{hex(phys_base + (table_info.address & 0x3fffffff))}'
-                                                   f' flags {hex(flags)}\n')
+                self._print_output(f'\t(1GB page): phys @ '
+                                   f'{hex(phys_base + (table_info.address & 0x3fffffff))}'
+                                   f' flags {hex(flags)}\n')
             else:
                 pde = table_info.entries[2]
                 if (pde & 1) == 0:
-                    self._output_window.insert(tk.END, f'\tNOT PRESENT\n')
+                    self._print_output(f'\tNOT PRESENT\n')
                 else:
                     if pde & (1 << 7):
                         # 2MB pages
                         phys_base = pde & ~0x1ff
                         flags = pde & 0xfff
-                        self._output_window.insert(tk.END, f'\t(2MB page): phys @ '
-                                                           f'{hex(phys_base + (table_info.address & 0x1fffff))}'
-                                                           f' flags {hex(flags)}\n')
+                        self._print_output(f'\t(2MB page): phys @ '
+                                           f'{hex(phys_base + (table_info.address & 0x1fffff))}'
+                                           f' flags {hex(flags)}\n')
                     else:
                         # 4KB pages
                         pte = table_info.entries[3]
                         if (pte & 1) == 0:
-                            self._output_window.insert(tk.END, f'\tNOT PRESENT\n')
+                            self._print_output(f'\tNOT PRESENT\n')
                         else:
                             phys_base = pte & ~0x1ff
                             flags = pte & 0xfff
-                            self._output_window.insert(tk.END, f'\t(4KB page): phys @ '
-                                                               f'{hex(phys_base + (table_info.address & 0xfff))}'
-                                                               f' flags {hex(flags)}\n')
+                            self._print_output(f'\t(4KB page): phys @ '
+                                               f'{hex(phys_base + (table_info.address & 0xfff))}'
+                                               f' flags {hex(flags)}\n')
 
     def _on_read_msr(self, msr_packet):
-        self._output_window.insert(tk.END, f'\nMSR info for {hex(msr_packet.msr)}, '
-                                           f'lo: {hex(msr_packet.lo)} hi: {hex(msr_packet.hi)}\n')
+        self._print_output(f'\nMSR info for {hex(msr_packet.msr)}, '
+                           f'lo: {hex(msr_packet.lo)} hi: {hex(msr_packet.hi)}\n')
 
     def _on_cli_enter(self, e):
         cmd = self._input.get().lstrip()
@@ -205,7 +209,7 @@ class DebuggerApp(DebugCore.Debugger):
                 else:
                     target = self._last_bp_packet.stack.rip
                 self._target_memory_request_queue.append((self.__TM_REQUEST_DATA, target))
-                self.read_target_memory(target, 8*16)
+                self.read_target_memory(target, 8 * 16)
             elif cmd == 'p':
                 self.single_step()
             elif cmd.startswith('.pt'):
@@ -241,31 +245,19 @@ class DebuggerApp(DebugCore.Debugger):
         self._output_window.insert(tk.INSERT, '\n')
         runs = len(raw_bytes) // 16
         i = 0
-        # TODO: this is dumb and slow, surely there's a much more pythonic way to do this faster...?
         for j in range(runs):
             run = raw_bytes[i:i + 16]
-            literal = ''
+            literal = "".join([chr(b) if 31 < b < 128 else '.' for b in run])
             bytes_str = run.hex(' ').lower()
-            for b in run:
-                if 32 <= b < 127:
-                    literal = literal + chr(b)
-                else:
-                    literal = literal + '.'
-            # literal = re.sub(f'[^{re.escape(string.printable)}]', '.', run)
-            self._output_window.insert(tk.END, f'{at:016x} {bytes_str}    {literal}\n')
+            self._print_output(f'{at:016x} {bytes_str}    {literal}\n')
             i = i + 16
         rem = len(raw_bytes) % 16
         if rem:
             run = raw_bytes[i:i + rem]
             bytes_str = run.hex(' ').lower()
-            literal = ''
-            for b in run:
-                if 32 <= b < 127:
-                    literal = literal + chr(b)
-                else:
-                    literal = literal + '.'
-            bytes_str = bytes_str.ljust(3*16 - 1, ' ')
-            self._output_window.insert(tk.END, f'{at:016x} {bytes_str}    {literal}\n')
+            literal = "".join([chr(b) if 31 < b < 128 else '.' for b in run])
+            bytes_str = bytes_str.ljust(3 * 16 - 1, ' ')
+            self._print_output(f'{at:016x} {bytes_str}    {literal}\n')
 
     def _disassemble_output_instruction(self, instr: iced_x86.Instruction, bytes_str: str, disasm: str,
                                         lookup_calls: bool):
@@ -304,11 +296,11 @@ class DebuggerApp(DebugCore.Debugger):
                 if call_target != 0:
                     lookup = self._symbol_lookup.lookup(call_target)
                     disasm = disasm + ' ==> ' + lookup
-        self._output_window.insert(tk.END, f'{instr.ip:016x} {bytes_str:30} {disasm}\n')
+        self._print_output(f'{instr.ip:016x} {bytes_str:30} {disasm}\n')
 
     def _disassemble_bytes_impl(self, raw_bytes, at):
         lookup = self._symbol_lookup.lookup(at)
-        self._output_window.insert(tk.INSERT, f'\n{lookup}:\n')
+        self._print_output(f'\n{lookup}:\n')
         decoder = iced_x86.Decoder(64, raw_bytes, ip=at)
         line = 0
         for instr in decoder:
@@ -326,7 +318,7 @@ class DebuggerApp(DebugCore.Debugger):
         base = image_info['base']
         entry_point = image_info['entry_point']
         self._pdb_lookup_info = [(self._pdb_path, base)]
-        version_str = str(kernel_info_json['version']['major']) +\
+        version_str = str(kernel_info_json['version']['major']) + \
                       '.' + \
                       str(kernel_info_json['version']['minor']) + \
                       '.' + \
@@ -339,39 +331,40 @@ class DebuggerApp(DebugCore.Debugger):
                                    + str(kernel_info_json['system_info']['processors']) + ' processors\n\n')
 
     def _dump_registers(self, bp_packet):
-        self._output_window.insert(tk.INSERT,
-                                   f'\nrax {bp_packet.stack.rax:016x} rbx {bp_packet.stack.rbx:016x} rcx '
-                                   f'{bp_packet.stack.rcx:016x} rdx {bp_packet.stack.rdx:016x}')
-        self._output_window.insert(tk.INSERT,
-                                   f'\nrsi {bp_packet.stack.rsi:016x} rdi {bp_packet.stack.rdi:016x} rsp '
-                                   f'{bp_packet.stack.rsp:016x} rbp {bp_packet.stack.rbp:016x}')
-        self._output_window.insert(tk.INSERT,
-                                   f'\nr8  {bp_packet.stack.r8:016x} r9  {bp_packet.stack.r9:016x} r10 '
-                                   f'{bp_packet.stack.r10:016x} r11 {bp_packet.stack.r11:016x}')
-        self._output_window.insert(tk.INSERT,
-                                   f'\nr12 {bp_packet.stack.r12:016x} r13 {bp_packet.stack.r13:016x} r14 '
-                                   f'{bp_packet.stack.r14:016x} r15 {bp_packet.stack.r15:016x}')
-        self._output_window.insert(tk.INSERT,
-                                   f'\nrflags {bp_packet.stack.rflags:08x} cs {bp_packet.stack.cs:02x} ss '
-                                   f'{bp_packet.stack.ss:02x}\n')
-        self._output_window.insert(tk.INSERT,
-                                   f'\ncr0 {bp_packet.cr0:08x} cr3 {bp_packet.cr3:08x} cr4 '
-                                   f'{bp_packet.cr4:08x}\n')
+        self._print_output(
+            f'\nrax {bp_packet.stack.rax:016x} rbx {bp_packet.stack.rbx:016x} rcx '
+            f'{bp_packet.stack.rcx:016x} rdx {bp_packet.stack.rdx:016x}')
+        self._print_output(
+            f'\nrsi {bp_packet.stack.rsi:016x} rdi {bp_packet.stack.rdi:016x} rsp '
+            f'{bp_packet.stack.rsp:016x} rbp {bp_packet.stack.rbp:016x}')
+        self._print_output(
+            f'\nr8  {bp_packet.stack.r8:016x} r9  {bp_packet.stack.r9:016x} r10 '
+            f'{bp_packet.stack.r10:016x} r11 {bp_packet.stack.r11:016x}')
+        self._print_output(
+            f'\nr12 {bp_packet.stack.r12:016x} r13 {bp_packet.stack.r13:016x} r14 '
+            f'{bp_packet.stack.r14:016x} r15 {bp_packet.stack.r15:016x}')
+        self._print_output(
+            f'\nrflags {bp_packet.stack.rflags:08x} cs {bp_packet.stack.cs:02x} ss '
+            f'{bp_packet.stack.ss:02x}\n')
         if bp_packet.stack.rflags & (1 << 0) != 0:
-            self._output_window.insert(tk.INSERT, 'CF ')
+            self._print_output('CF ')
         if bp_packet.stack.rflags & (1 << 6) != 0:
-            self._output_window.insert(tk.INSERT, 'ZF ')
+            self._print_output('ZF ')
         if bp_packet.stack.rflags & (1 << 7) != 0:
-            self._output_window.insert(tk.INSERT, 'SF ')
+            self._print_output('SF ')
         if bp_packet.stack.rflags & (1 << 8) != 0:
-            self._output_window.insert(tk.INSERT, 'TF ')
+            self._print_output('TF ')
         if bp_packet.stack.rflags & (1 << 9) != 0:
-            self._output_window.insert(tk.INSERT, 'IF ')
+            self._print_output('IF ')
         if bp_packet.stack.rflags & (1 << 10) != 0:
-            self._output_window.insert(tk.INSERT, 'DF ')
+            self._print_output('DF ')
         if bp_packet.stack.rflags & (1 << 11) != 0:
-            self._output_window.insert(tk.INSERT, 'OF ')
-        self._output_window.insert(tk.INSERT, '\n')
+            self._print_output('OF ')
+
+        self._print_output(
+            f'\ncr0 {bp_packet.cr0:08x} cr3 {bp_packet.cr3:08x} cr4 '
+            f'{bp_packet.cr4:08x}\n')
+        self._print_output('\n')
 
     def _on_breakpoint(self):
         try:
@@ -379,7 +372,7 @@ class DebuggerApp(DebugCore.Debugger):
                 from pdbparse.symlookup import Lookup
                 self._symbol_lookup = Lookup(self._pdb_lookup_info)
             lookup = self._symbol_lookup.lookup(self._last_bp_packet.stack.rip)
-            self._output_window.insert(tk.INSERT, f'\n>break - code @ {lookup}\n')
+            self._print_output(f'\n>break - code @ {lookup}\n')
             raw_bytes = bytearray(self._last_bp_packet.instruction)
             instr = iced_x86.Decoder(64, raw_bytes, ip=self._last_bp_packet.stack.rip).decode()
             disasm = self._asm_formatter.format(instr)
@@ -391,9 +384,45 @@ class DebuggerApp(DebugCore.Debugger):
         except Exception as e:
             print(str(e))
 
+    #TODO hook this up
+    def _on_pf(self):
+        if self._symbol_lookup is None:
+            from pdbparse.symlookup import Lookup
+            self._symbol_lookup = Lookup(self._pdb_lookup_info)
+        lookup = self._symbol_lookup.lookup(self._last_bp_packet.stack.rip)
+        error_code = self._last_bp_packet.stack.error_code
+        cr2 = self._last_bp_packet.cr2
+        p = 'page level protection' if (error_code & (1 << 0)) else 'page not-present'
+        wr = 'write' if (error_code & (1 << 1)) else 'read'
+        us = 'user mode' if (error_code & (1 << 2)) else 'kernel mode'
+        rsvd = 'reserved bit violation' if (error_code & (1 << 3)) else ''
+        instr = 'instruction fetch' if (error_code & (1 << 4)) else ''
+        flags = ' '.join([p, wr, us, rsvd, instr])
+        self._print_output(f'\n>PAGE FAULT - code @ {lookup}\n\t'
+                           f'@ {hex(cr2)}: {flags}')
+        # allow input
+        self._cli.configure(state=tk.NORMAL)
+        self._input.set('')
+
     def _on_gpf(self):
-        # TODO:
-        self._on_breakpoint()
+        """
+        Could be any of:
+        * Executing a privileged instruction while CPL > 0.
+        * Writing a 1 into any register field that is reserved, must be zero (MBZ).
+        * Attempting to execute an SSE instruction specifying an unaligned memory operand.
+        * Loading a non-canonical base address into the GDTR or IDTR.
+        * Using WRMSR to write a read-only MSR.
+        * Any long-mode consistency-check violation.
+        """
+        if self._symbol_lookup is None:
+            from pdbparse.symlookup import Lookup
+            self._symbol_lookup = Lookup(self._pdb_lookup_info)
+        lookup = self._symbol_lookup.lookup(self._last_bp_packet.stack.rip)
+        error_code = self._last_bp_packet.stack.error_code
+        self._print_output(f'\n>GENERAL PROTECTION FAULT - code @ {lookup}, error code {hex(error_code)}')
+        # allow input
+        self._cli.configure(state=tk.NORMAL)
+        self._input.set('')
 
     def _process_trace_queue_impl(self, trace_queue: queue.Queue):
         self._trace_window.configure(state=tk.NORMAL)
