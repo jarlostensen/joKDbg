@@ -80,6 +80,7 @@ class DebuggerApp(DebugCore.Debugger):
         self._output_window = tk.Text(self._output_pane, wrap=tk.WORD, font=self.__BASE_FONT,
                                       bg=self.__DARK_BG, fg=self.__DARK_FG)
         self._output_window.tag_configure('assert', foreground='red')
+        self._output_window.tag_configure('error', foreground='red')
         self._output_window.pack(fill=tk.BOTH, expand=True, side=tk.LEFT)
         self._output_sb = tk.Scrollbar(self._output_window)
         self._output_sb.pack(side=tk.RIGHT, fill=tk.BOTH)
@@ -124,13 +125,24 @@ class DebuggerApp(DebugCore.Debugger):
         self._pdb_path = ''
         self._target_memory_request_queue = []
 
-    def _print_output(self, text):
-        self._output_window.insert(tk.END, text)
+        # CLI commands and handlers
+        self._commands = {'h': ('help', self._cli_cmd_help)}
+        self._commands['?'] = self._commands['h']
+        self._commands['g'] = ('go', self._cli_cmd_go)
+        self._commands['d'] = ('dump', self._cli_cmd_d)
+        self._commands['r'] = ('dump registers', self._cli_cmd_r)
+        self._commands['u'] = ('unassemble', self._cli_cmd_u)
+        self._commands['p'] = ('single step', self._cli_cmd_p)
+        self._commands['.pt'] = ('page table traverse', self._cli_cmd_pt)
+        self._commands['rdmsr'] = ('read MSR', self._cli_cmd_rdmsr)
+
+    def _print_output(self, text, tag=None):
+        self._output_window.insert(tk.END, text, tag)
         self._output_window.see(tk.END)
 
-    def _print_trace(self, text):
+    def _print_trace(self, text, tag=None):
         self._trace_window.configure(state=tk.NORMAL)
-        self._trace_window.insert(tk.END, text)
+        self._trace_window.insert(tk.END, text, tag)
         self._trace_window.configure(state=tk.DISABLED)
         self._trace_window.see(tk.END)
 
@@ -202,42 +214,62 @@ class DebuggerApp(DebugCore.Debugger):
         self._print_output(f'\nMSR info for {hex(msr_packet.msr)}, '
                            f'lo: {hex(msr_packet.lo)} hi: {hex(msr_packet.hi)}\n')
 
+    def _cli_cmd_help(self, _):
+        self._print_output(f'\nCommands:\n')
+        for command, info in self._commands.items():
+            self._print_output(f'\t{command}\t\t\t{info[0]}\n')
+
+    def _cli_cmd_go(self, _):
+        self._input.set(self.__DEBUGGER_NOT_CONNECTED_MSG)
+        self._cli_disable()
+        self.continue_execution()
+
+    def _cli_cmd_r(self, _):
+        self._dump_registers(self._last_bp_packet)
+
+    def _cli_cmd_u(self, cmd_parts):
+        target = self._last_bp_packet.stack.rip
+        if len(cmd_parts) > 1:
+            target = _convert_input_number(cmd_parts[1])
+        self._target_memory_request_queue.append((self.__TM_REQUEST_CODE, target))
+        self.read_target_memory(target, 52)
+
+    def _cli_cmd_d(self, cmd_parts):
+        if len(cmd_parts) > 1:
+            target = _convert_input_number(cmd_parts[1])
+        else:
+            target = self._last_bp_packet.stack.rip
+        self._target_memory_request_queue.append((self.__TM_REQUEST_DATA, target))
+        self.read_target_memory(target, 8 * 16)
+
+    def _cli_cmd_p(self, _):
+        self.single_step()
+
+    def _cli_cmd_pt(self, cmd_parts):
+        if len(cmd_parts) > 1:
+            target = _convert_input_number(cmd_parts[1])
+        else:
+            target = self._last_bp_packet.stack.rip
+        self.traverse_pagetable(target)
+
+    def _cli_cmd_rdmsr(self, cmd_parts):
+        if len(cmd_parts) > 1:
+            self.read_msr(_convert_input_number(cmd_parts[1]))
+
     def _on_cli_enter(self, e):
         cmd = self._input.get().lstrip()
-        self._cli_history.append(cmd)
-        if self.state_is_break():
-            if cmd == 'h' or cmd == '?':
-
-            elif cmd == 'g':
-                self._input.set(self.__DEBUGGER_NOT_CONNECTED_MSG)
-                self._cli_disable()
-                self.continue_execution()
-            elif cmd == 'r':
-                self._dump_registers(self._last_bp_packet)
-            elif cmd == 'u':
-                self._target_memory_request_queue.append((self.__TM_REQUEST_CODE, self._last_bp_packet.stack.rip))
-                self.read_target_memory(self._last_bp_packet.stack.rip, 52)
-            elif cmd.startswith('d'):
-                parts = cmd.split()
-                if len(parts) > 1:
-                    target = _convert_input_number(parts[1])
-                else:
-                    target = self._last_bp_packet.stack.rip
-                self._target_memory_request_queue.append((self.__TM_REQUEST_DATA, target))
-                self.read_target_memory(target, 8 * 16)
-            elif cmd == 'p':
-                self.single_step()
-            elif cmd.startswith('.pt'):
-                parts = cmd.split()
-                if len(parts) > 1:
-                    target = _convert_input_number(parts[1])
-                else:
-                    target = self._last_bp_packet.stack.rip
-                self.traverse_pagetable(target)
-            elif cmd.startswith('.rdmsr'):
-                parts = cmd.split()
-                if len(parts) > 1:
-                    self.read_msr(_convert_input_number(parts[1]))
+        if len(cmd) == 0:
+            return
+        cmd_parts = cmd.split()
+        try:
+            command = self._commands[cmd_parts[0]]
+            # execute the command handler
+            command[1](cmd_parts)
+            self._cli_history.append(cmd)
+            # clear the command
+            self._input.set('')
+        except KeyError:
+            self._print_output(f'\nunknown command\n', 'warning')
 
     def run(self, pdb_path):
         self._pdb_path = pdb_path
