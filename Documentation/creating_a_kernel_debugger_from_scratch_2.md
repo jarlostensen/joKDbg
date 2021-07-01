@@ -4,10 +4,10 @@
 [josx64](https://github.com/jarlostensen/josx64) and [joKDbg](https://github.com/jarlostensen/joKDbg)
 
 ## A short recap
-In the [first installment](./creating_a_kernel_debugger_from_scrach_1.md) of this series I described some of the fundamentals of my little kernel debugger project. There I outlined how a simple framework of kernel code and a debugger written in Python could go a long way towards creating a fully functional, and useful, tool.\
+In the [first installment](creating_a_kernel_debugger_from_scrach_1.md) of this series I described some of the fundamentals of my little kernel debugger project. There I outlined how a simple framework of kernel code and a debugger written in Python could go a long way towards creating a fully functional, and useful, tool.\
 Since then I've made some progress, and in this article I'll go into more depth about breakpoints, stack unwinding, and symbol lookups.
 
-![debugger](./assets/debugger_2.png)
+![debugger](assets/debugger_2.png)
 
 ## A (slightly) better architecture
 I refactored the debugger code quite a lot since the first try, not the least as I get more comfortable with Python and can start thinking about *form* as much as just *function* of the code. The back end now uses a thread to read and write packets to and from the kernel, leaving the UI (based on [tkinter](https://docs.python.org/3/library/tkinter.html) for now) more responsive in addition to separating concerns better.\
