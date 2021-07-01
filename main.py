@@ -141,6 +141,9 @@ class DebuggerApp(DebugCore.Debugger):
         self._symbol_lookup = None
         self._pdb_path = ''
         self._target_memory_request_queue = []
+        self._pe_path = None
+        self._pe = None
+        self._image_base = 0
 
         # CLI commands and handlers
         self._commands = {'h': ('help', self._cli_cmd_help)}
@@ -374,7 +377,8 @@ class DebuggerApp(DebugCore.Debugger):
         cmd = self._cli_history[self._cli_history_pos]
         self._input.set(cmd)
 
-    def run(self, pdb_path):
+    def run(self, pe_path, pdb_path):
+        self._pe_path = pe_path
         self._pdb_path = pdb_path
         try:
             self.pipe_connect(r'\\.\pipe\josxDbg')
@@ -459,15 +463,15 @@ class DebuggerApp(DebugCore.Debugger):
     def _on_connect_impl(self, kernel_info_json):
         image_info = kernel_info_json['image_info']
         from pdbparse.symlookup import Lookup
-        base = image_info['base']
+        self._image_base = image_info['base']
         entry_point = image_info['entry_point']
-        self._pdb_lookup_info = [(self._pdb_path, base)]
+        self._pdb_lookup_info = [(self._pdb_path, self._image_base)]
         version_str = str(kernel_info_json['version']['major']) + \
                       '.' + \
                       str(kernel_info_json['version']['minor']) + \
                       '.' + \
                       str(kernel_info_json['version']['patch'])
-        self._print_output(f'\nconnected to kernel {version_str}, base is @ {hex(base)}, '
+        self._print_output(f'\nconnected to kernel {version_str}, base is @ {hex(self._image_base)}, '
                            f'entry point @ {hex(entry_point)}\n')
         self._print_output('kernel reports available RAM ' +
                            str(kernel_info_json['system_info']['memory'])
@@ -510,6 +514,24 @@ class DebuggerApp(DebugCore.Debugger):
             f'{bp_packet.cr4:08x}\n')
         self._print_output('\n')
 
+    def _process_callstack(self, callstack):
+        """
+        look up the instruction bytes at the callstack entries from the kernel executable to check if
+        the preceeding instruction is a call. If it is then the location is probably part of the callstack
+        """
+        if self._pe is None:
+            import pefile
+            self._pe = pefile.PE(self._pe_path, fast_load=True)
+        text_section = self._pe.sections[0]
+        for entry in callstack:
+            rva = (entry - self._image_base) + (text_section.VirtualAddress - text_section.PointerToRawData)
+            offset = self._pe.get_offset_from_rva(rva)
+            instruction_bytes = self._pe.get_memory_mapped_image()[offset-3:offset+15]
+            # this is basic but effective; a call instruction can be two or three bytes long
+            if instruction_bytes[0] == 0xff or instruction_bytes[1] == 0xff:
+                lookup = self._symbol_lookup.lookup(entry)
+                self._print_stack(f'{hex(entry)}\t{lookup}\n')
+
     def _on_breakpoint(self):
         try:
             if self._symbol_lookup is None:
@@ -517,11 +539,13 @@ class DebuggerApp(DebugCore.Debugger):
                 self._symbol_lookup = Lookup(self._pdb_lookup_info)
             lookup = self._symbol_lookup.lookup(self._last_bp_packet.stack.rip)
             self._print_output(f'\n>break - code @ {lookup}\n')
-            callstack = (ctypes.c_uint64 * self._last_bp_packet.call_stack_size)\
-                .from_buffer_copy(self._last_bp_callstack)
-            for entry in callstack:
-                lookup = self._symbol_lookup.lookup(entry)
-                self._print_stack(f'{hex(entry)}\t{lookup}\n')
+
+            if self._last_bp_packet.call_stack_size > 0:
+                callstack = (ctypes.c_uint64 * self._last_bp_packet.call_stack_size)\
+                    .from_buffer_copy(self._last_bp_callstack)
+                self._print_stack(f'{hex(self._last_bp_packet.stack.rip)}\t{lookup}\n')
+                self._process_callstack(callstack)
+
             raw_bytes = bytearray(self._last_bp_packet.instruction)
             instr = iced_x86.Decoder(64, raw_bytes, ip=self._last_bp_packet.stack.rip).decode()
             disasm = self._asm_formatter.format(instr)
@@ -576,7 +600,14 @@ class DebuggerApp(DebugCore.Debugger):
         trace_queue.task_done()
 
 
+def test_pe_load():
+    import pefile
+    pe = pefile.PE(f'e:/dev/osdev/josx64/build/bootx64.efi', fast_load=True)
+    for section in pe.sections:
+        print(f'{str(section.Name)}, {hex(section.VirtualAddress)}, {hex(section.Misc_VirtualSize)}, {section.SizeOfRawData}')
+
+
 if __name__ == '__main__':
     app = DebuggerApp()
-    app.run(f'e:/dev/osdev/josx64/build/bootx64.pdb')
-    # app._root.mainloop()
+    app.run(f'e:/dev/osdev/josx64/build/bootx64.efi', f'e:/dev/osdev/josx64/build/bootx64.pdb')
+    app._root.mainloop()

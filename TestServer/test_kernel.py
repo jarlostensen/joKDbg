@@ -24,8 +24,8 @@ class TestKernel:
         as_text = read.decode("utf-8")
         if as_text == debugger_commands.CONNECTION_HANDSHAKE:
             print(f'we are connected')
-            kernel_response = {'version': {'minor': 0, 'major': '0', 'patch': 0},
-                               'image_info': {'base': 0, 'entry_point': 0x100},
+            kernel_response = {'version': {'minor': 0, 'major': 0, 'patch': 0},
+                               'image_info': {'base': 0x81d2d000, 'entry_point': 0x81d2e9c0},
                                'system_info': {'processors': 24, 'memory': 0x10000}
                                }
 
@@ -43,7 +43,7 @@ class TestKernel:
     def breakpoint(self):
         bp_packet = debugger_packets.DebuggerBpPacket()
         ctypes.memset(ctypes.addressof(bp_packet.stack), 0, ctypes.sizeof(bp_packet.stack))
-        bp_packet.stack.rip = 0x100
+        bp_packet.stack.rip = 0x81d2ef90
         bp_packet.stack.cs = 1
         bp_packet.stack.ss = 2
         bp_packet.stack.rflags = 0xffffffff
@@ -53,8 +53,8 @@ class TestKernel:
 
         call_stack_packet = ctypes.create_string_buffer(ctypes.sizeof(ctypes.c_uint64 * 2))
         call_stack = (ctypes.c_uint64 * 2).from_buffer(call_stack_packet)
-        call_stack[0] = 0x110
-        call_stack[1] = 0x300
+        call_stack[0] = 0x81d2e9c0
+        call_stack[1] = 0x81d2ea0f
         self._send_debugger_packet(debugger_commands.BREAKPOINT_CALLSTACK, bytearray(call_stack))
 
         print("in breakpoint loop...")
