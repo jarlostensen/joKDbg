@@ -526,8 +526,8 @@ class DebuggerApp(DebugCore.Debugger):
         for entry in callstack:
             rva = (entry - self._image_base) + (text_section.VirtualAddress - text_section.PointerToRawData)
             offset = self._pe.get_offset_from_rva(rva)
-            instruction_bytes = self._pe.get_memory_mapped_image()[offset-3:offset+15]
             # this is basic but effective; a call instruction can be two or three bytes long
+            instruction_bytes = self._pe.get_memory_mapped_image()[offset-3:offset]
             if instruction_bytes[0] == 0xff or instruction_bytes[1] == 0xff:
                 lookup = self._symbol_lookup.lookup(entry)
                 self._print_stack(f'{hex(entry)}\t{lookup}\n')
