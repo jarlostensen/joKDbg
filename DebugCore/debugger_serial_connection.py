@@ -32,16 +32,22 @@ class DebuggerSerialConnection:
         self._send_packet_impl(ctypes.cast(ctypes.byref(packet),
                                            ctypes.POINTER(ctypes.c_char * ctypes.sizeof(packet))).contents.raw)
 
-    def _send_kernel_packet(self, packet_id, packet_data):
-        self._send_kernel_packet_header(packet_id, ctypes.sizeof(packet_data))
-        self._send_packet_impl(ctypes.cast(ctypes.byref(packet_data),
-                                           ctypes.POINTER(ctypes.c_char * ctypes.sizeof(packet_data))).contents.raw)
+    def _send_kernel_packet(self, packet_id, packet_data=None):
+        if packet_data is not None:
+            self._send_kernel_packet_header(packet_id, ctypes.sizeof(packet_data))
+            self._send_packet_impl(ctypes.cast(ctypes.byref(packet_data),
+                                               ctypes.POINTER(ctypes.c_char * ctypes.sizeof(packet_data))).contents.raw)
+        else:
+            self._send_kernel_packet_header(packet_id, 0)
+
+    def send_kernel_update_breakpoints(self, packets):
+        self._send_kernel_packet(UPDATE_BREAKPOINTS, packets)
 
     def send_kernel_continue(self):
-        self._send_kernel_packet_header(CONTINUE, 0)
+        self._send_kernel_packet(CONTINUE)
 
     def send_kernel_single_step(self):
-        self._send_kernel_packet_header(SINGLE_STEP, 0)
+        self._send_kernel_packet(SINGLE_STEP)
 
     def send_kernel_read_target_memory(self, address, length):
         if length <= 0:
@@ -49,24 +55,21 @@ class DebuggerSerialConnection:
         rt_packet = DebuggerReadTargetMemoryPacket()
         rt_packet._address = address
         rt_packet._length = length
-        self._send_kernel_packet_header(READ_TARGET_MEMORY, ctypes.sizeof(rt_packet))
-        self._send_packet_impl(ctypes.cast(ctypes.byref(rt_packet),
-                                           ctypes.POINTER(ctypes.c_char * ctypes.sizeof(rt_packet))).contents.raw)
+        self._send_kernel_packet(READ_TARGET_MEMORY, rt_packet)
 
     def send_kernel_get_task_list(self):
-        self._send_kernel_packet_header(GET_TASK_LIST, 0)
+        self._send_kernel_packet(GET_TASK_LIST)
 
     def send_kernel_traverse_page_table(self, at):
         pt_packet = DebuggerTraversePageTablePacket()
         pt_packet.address = at
-        self._send_kernel_packet_header(TRAVERSE_PAGE_TABLE, ctypes.sizeof(pt_packet))
-        self._send_packet_impl(ctypes.cast(ctypes.byref(pt_packet),
-                                           ctypes.POINTER(ctypes.c_char * ctypes.sizeof(pt_packet))).contents.raw)
+        self._send_kernel_packet(TRAVERSE_PAGE_TABLE, pt_packet)
 
     def send_kernel_read_msr(self, msr):
         rdmsr_packet = DebuggerRDMSRPacket()
         rdmsr_packet.msr = msr
         self._send_kernel_packet(READ_MSR, rdmsr_packet)
+
 
 def debugger_serial_pipe_connection_factory():
     if sys.platform == 'win32':

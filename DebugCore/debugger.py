@@ -9,6 +9,10 @@ import queue
 import threading
 
 
+def breakpoint_marked_for_clear(bp):
+    return bp[2]
+
+
 class Debugger:
     _STATE_WAITING = 0
     _STATE_BREAK = 1
@@ -24,6 +28,11 @@ class Debugger:
         self._disconnected = True
         self._state = self._STATE_WAITING
         self._last_bp_packet = None
+        self._last_bp_callstack = None
+        # breakpoints are stored as [enabled, index] and keyed on the target address
+        self._breakpoints = {}
+        # we keep track of changes so we know if we need to synchronise bps with the kernel
+        self._breakpoints_dirty = False
 
     def _rw_thread_func(self):
         try:
@@ -47,7 +56,12 @@ class Debugger:
                 # writes are immediate (and technically blocking)
                 while not self._send_queue.empty():
                     packet_id, packet_data = self._send_queue.get(block=True, timeout=None)
-                    if packet_id == READ_TARGET_MEMORY:
+                    # TODO: rewrite all of these to use a map of handlers
+                    if packet_id == CONTINUE:
+                        self._conn.send_kernel_continue()
+                    elif packet_id == SINGLE_STEP:
+                        self._conn.send_kernel_single_step()
+                    elif packet_id == READ_TARGET_MEMORY:
                         self._conn.send_kernel_read_target_memory(packet_data[0], packet_data[1])
                     elif packet_id == GET_TASK_LIST:
                         self._conn.send_kernel_get_task_list()
@@ -55,6 +69,8 @@ class Debugger:
                         self._conn.send_kernel_traverse_page_table(packet_data)
                     elif packet_id == READ_MSR:
                         self._conn.send_kernel_read_msr(packet_data)
+                    elif packet_id == UPDATE_BREAKPOINTS:
+                        self._conn.send_kernel_update_breakpoints(packet_data)
                     else:
                         pass
         except UnicodeDecodeError:
@@ -64,16 +80,28 @@ class Debugger:
             print("rw_thread exception: " + str(e))
             self._disconnected = True
 
-    def _start_threads(self):
-        self._rw_thread = threading.Thread(target=self._rw_thread_func, daemon=True)
-        self._rw_thread.start()
-
     def pipe_connect(self, pipe_name):
         self._conn = debugger_serial_pipe_connection_factory()
         self._conn.connect(pipe_name)
         self._disconnected = False
-        self._start_threads()
+        self._rw_thread = threading.Thread(target=self._rw_thread_func, daemon=True)
+        self._rw_thread.start()
         self._on_connect_impl(self._conn.kernel_connection_info())
+
+    def synchronize_kernel(self):
+        if self._breakpoints_dirty:
+            breakpoints = DebuggerBreakpointInfoPacket * len(self._breakpoints)
+            memory = ctypes.create_string_buffer(ctypes.sizeof(breakpoints))
+            packets = breakpoints.from_buffer(memory)
+            i = 0
+            for key, bp in self._breakpoints.items():
+                packets[i].target = key
+                packets[i].edc = BreakpointStatus.BREAKPOINT_STATUS_CLEARED.value if bp[2] \
+                    else BreakpointStatus.BREAKPOINT_STATUS_ENABLED.value \
+                    if bp[0] else BreakpointStatus.BREAKPOINT_STATUS_DISABLED.value
+                i = i + 1
+            self._send_queue.put((UPDATE_BREAKPOINTS, packets))
+            self._breakpoints_dirty = False
 
     def state_is_waiting(self):
         return self._state == self._STATE_WAITING
@@ -81,7 +109,48 @@ class Debugger:
     def state_is_break(self):
         return self._state == self._STATE_BREAK
 
-    def _on_target_memory_read(self, packet): pass
+    def set_breakpoint(self, target) -> bool:
+        """
+        set breakpoint at address, enabled
+        """
+        bp = self._breakpoints.get(target)
+        if bp is None:
+            self._breakpoints[target] = [True, len(self._breakpoints), False]
+            self._breakpoints_dirty = True
+            return True
+
+    def get_breakpoint_from_target(self, target):
+        try:
+            return self._breakpoints[target]
+        except KeyError:
+            for key, val in self._breakpoints.items():
+                if val[1] == target:
+                    return self._breakpoints[key]
+
+    def enable_breakpoint(self, index):
+        bp = self.get_breakpoint_from_target(index)
+        if not bp[0]:
+            bp[0] = True
+            self._breakpoints_dirty = True
+
+    def disable_breakpoint(self, index):
+        bp = self.get_breakpoint_from_target(index)
+        if bp[0]:
+            bp[0] = False
+            self._breakpoints_dirty = True
+
+    def clear_breakpoint(self, index):
+        try:
+            bp = self._breakpoints[index]
+            bp[2] = True
+            self._breakpoints_dirty = True
+        except KeyError:
+            for key, val in self._breakpoints.items():
+                if val[1] == index:
+                    bp = self._breakpoints[key]
+                    bp[2] = True
+                    self._breakpoints_dirty = True
+                    break
 
     def read_target_memory(self, at, count):
         self._send_queue.put((READ_TARGET_MEMORY, (at, count)))
@@ -91,14 +160,14 @@ class Debugger:
 
     def continue_execution(self):
         if self._state == self._STATE_BREAK:
-            self._conn.send_kernel_continue()
+            self._send_queue.put((CONTINUE, 0))
             self._state == self._STATE_WAITING
         else:
             raise Exception("not in breakpoint")
 
     def single_step(self):
         if self._state == self._STATE_BREAK:
-            self._conn.send_kernel_single_step()
+            self._send_queue.put((SINGLE_STEP, 0))
             self._state == self._STATE_WAITING
         else:
             raise Exception("not in breakpoint")
@@ -117,9 +186,19 @@ class Debugger:
                 packet_id, packet = self._command_queue.get_nowait()
                 if packet_id == BREAKPOINT:
                     self._last_bp_packet = DebuggerBpPacket.from_buffer_copy(packet)
+                    if self._last_bp_packet.call_stack_size > 0:
+                        packet_id, packet = self._command_queue.get(block=True)
+                        if packet_id != BREAKPOINT_CALLSTACK:
+                            raise Exception(f"invalid packet {packet_id}, expected BREAKPOINT_CALLSTACK")
+                        self._last_bp_callstack = packet
                     self._on_breakpoint()
                     self._state = self._STATE_BREAK
                 elif packet_id == GPF:
+                    self._last_bp_packet = DebuggerBpPacket.from_buffer_copy(packet)
+                    self._state = self._STATE_GPF
+                    self._on_gpf()
+                    self._state = self._STATE_BREAK
+                elif packet_id == UD:
                     self._last_bp_packet = DebuggerBpPacket.from_buffer_copy(packet)
                     self._state = self._STATE_GPF
                     self._on_gpf()

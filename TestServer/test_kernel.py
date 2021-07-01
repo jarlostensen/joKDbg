@@ -48,7 +48,15 @@ class TestKernel:
         bp_packet.stack.ss = 2
         bp_packet.stack.rflags = 0xffffffff
         bp_packet.instruction[0] = 0xcc
+        bp_packet.call_stack_size = 2
         self._send_debugger_packet(debugger_commands.BREAKPOINT, bytearray(bp_packet))
+
+        call_stack_packet = ctypes.create_string_buffer(ctypes.sizeof(ctypes.c_uint64 * 2))
+        call_stack = (ctypes.c_uint64 * 2).from_buffer(call_stack_packet)
+        call_stack[0] = 0x110
+        call_stack[1] = 0x300
+        self._send_debugger_packet(debugger_commands.BREAKPOINT_CALLSTACK, bytearray(call_stack))
+
         print("in breakpoint loop...")
         while True:
             packet_id, packet_length, packet = self._conn.read_packet()
@@ -56,11 +64,17 @@ class TestKernel:
                 print("continuing ")
                 self.trace("continue execution")
                 break
-            if packet_id == debugger_commands.READ_TARGET_MEMORY:
+            elif packet_id == debugger_commands.UPDATE_BREAKPOINTS:
+                num_bps = packet_length // ctypes.sizeof(debugger_packets.DebuggerBreakpointInfoPacket)
+                bp_packets = debugger_packets.DebuggerBreakpointInfoPacket * num_bps
+                bps = bp_packets.from_buffer_copy(packet)
+                print(f'UPDATE_BREAKPOINTS: got {num_bps} bps:\n')
+                for i in range(num_bps):
+                    print(f'bp {i} @ {hex(bps[i].target)} state is {bps[i].edc}')
+            elif packet_id == debugger_commands.READ_TARGET_MEMORY:
                 rt_packet = debugger_packets.DebuggerReadTargetMemoryPacket.from_buffer_copy(packet)
                 print(f'READ_TARGET_MEMORY: {rt_packet._length} bytes from {hex(rt_packet._address)}')
                 self._send_debugger_packet(debugger_commands.READ_TARGET_MEMORY_RESP, self.__CODE)
-
 
     def _send_debugger_packet(self, packet_id: int, packet_data: bytes):
         self._send_debugger_packet_header(packet_id, len(packet_data))

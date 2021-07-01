@@ -1,6 +1,7 @@
 """
 This is a sandbox of experimental code to use and refine the DebugCore Debugger module
 """
+import ctypes
 import time
 import re
 import string
@@ -64,7 +65,7 @@ class DebuggerApp(DebugCore.Debugger):
         self._trace_window = tk.Text(self._trace_pane, wrap=tk.WORD, font=self.__BASE_FONT,
                                      bg=self.__DARK_BG, fg=self.__DARK_FG)
         self._trace_window.pack(fill=tk.BOTH, expand=True, side=tk.LEFT)
-        # self._trace_window['state'] = 'disabled'
+        self._trace_window.configure(state=tk.DISABLED)
         self._trace_sb = tk.Scrollbar(self._trace_window)
         self._trace_sb.pack(side=tk.RIGHT, fill=tk.BOTH)
         self._trace_window.config(yscrollcommand=self._trace_sb.set)
@@ -81,6 +82,7 @@ class DebuggerApp(DebugCore.Debugger):
                                       bg=self.__DARK_BG, fg=self.__DARK_FG)
         self._output_window.tag_configure('assert', foreground='red')
         self._output_window.tag_configure('error', foreground='red')
+        self._output_window.tag_configure('warning', foreground='orange')
         self._output_window.pack(fill=tk.BOTH, expand=True, side=tk.LEFT)
         self._output_sb = tk.Scrollbar(self._output_window)
         self._output_sb.pack(side=tk.RIGHT, fill=tk.BOTH)
@@ -104,9 +106,21 @@ class DebuggerApp(DebugCore.Debugger):
 
         self._stack_frame = tk.LabelFrame(self._bottom_bottom_pane, text='Stack')
         self._stack_frame.pack(fill=tk.BOTH, expand=True, side=tk.RIGHT)
+        self._stack_frame.pack_propagate(0)
+        self._stack_pane = tk.Frame(self._stack_frame, bg=self.__DARK_FRAME_BG)
+        self._stack_pane.pack(fill=tk.BOTH, expand=True, side=tk.RIGHT)
 
         self._locals_frame = tk.LabelFrame(self._bottom_bottom_pane, text='Locals')
         self._locals_frame.pack(fill=tk.BOTH, expand=True, side=tk.RIGHT)
+
+        # stack window
+        self._stack_window = tk.Text(self._stack_pane, wrap=tk.WORD,
+                                     font=self.__BASE_FONT, bg=self.__DARK_BG, fg=self.__DARK_FG)
+        self._stack_window.pack(fill=tk.BOTH, expand=True, side=tk.LEFT)
+        self._stack_sb = tk.Scrollbar(self._stack_window)
+        self._stack_sb.pack(side=tk.RIGHT, fill=tk.BOTH)
+        self._stack_window.config(yscrollcommand=self._stack_sb)
+        self._stack_sb.config(command=self._stack_window.yview)
 
         # CLI input window
         self._prompt = tk.Label(self._cli_frame, text="> ")
@@ -115,11 +129,14 @@ class DebuggerApp(DebugCore.Debugger):
         self._cli = tk.Entry(self._cli_frame, text=self._input)
         self._cli.pack(side=tk.LEFT, fill=tk.BOTH, padx=2, expand=True)
         self._cli.bind('<Return>', self._on_cli_enter)
+        self._cli.bind('<Up>', self._on_cli_up)
+        self._cli.bind('<Down>', self._on_cli_down)
         self._input.set(self.__DEBUGGER_NOT_CONNECTED_MSG)
         self._cli.configure(state=tk.DISABLED)
 
         # other internals
         self._cli_history = []
+        self._cli_history_pos = 0
         self._asm_formatter = iced_x86.Formatter(iced_x86.FormatterSyntax.NASM)
         self._symbol_lookup = None
         self._pdb_path = ''
@@ -129,12 +146,17 @@ class DebuggerApp(DebugCore.Debugger):
         self._commands = {'h': ('help', self._cli_cmd_help)}
         self._commands['?'] = self._commands['h']
         self._commands['g'] = ('go', self._cli_cmd_go)
-        self._commands['d'] = ('dump', self._cli_cmd_d)
+        self._commands['d'] = ('dump memory', self._cli_cmd_d)
         self._commands['r'] = ('dump registers', self._cli_cmd_r)
         self._commands['u'] = ('unassemble', self._cli_cmd_u)
         self._commands['p'] = ('single step', self._cli_cmd_p)
         self._commands['.pt'] = ('page table traverse', self._cli_cmd_pt)
         self._commands['rdmsr'] = ('read MSR', self._cli_cmd_rdmsr)
+        self._commands['bp'] = ('set breakpoint', self._cli_cmd_bp)
+        self._commands['bl'] = ('list breakpoints', self._cli_cmd_bl)
+        self._commands['be'] = ('enable breakpoint', self._cli_cmd_be)
+        self._commands['bd'] = ('disable breakpoint', self._cli_cmd_bd)
+        self._commands['bc'] = ('clear breakpoint', self._cli_cmd_bc)
 
     def _print_output(self, text, tag=None):
         self._output_window.insert(tk.END, text, tag)
@@ -145,6 +167,12 @@ class DebuggerApp(DebugCore.Debugger):
         self._trace_window.insert(tk.END, text, tag)
         self._trace_window.configure(state=tk.DISABLED)
         self._trace_window.see(tk.END)
+
+    def _print_stack(self, text):
+        self._stack_window.configure(state=tk.NORMAL)
+        self._stack_window.insert(tk.END, text)
+        self._stack_window.configure(state=tk.DISABLED)
+        self._stack_window.see(tk.END)
 
     def _cli_disable(self):
         self._cli.configure(state=tk.DISABLED)
@@ -222,6 +250,7 @@ class DebuggerApp(DebugCore.Debugger):
     def _cli_cmd_go(self, _):
         self._input.set(self.__DEBUGGER_NOT_CONNECTED_MSG)
         self._cli_disable()
+        self.synchronize_kernel()
         self.continue_execution()
 
     def _cli_cmd_r(self, _):
@@ -243,6 +272,7 @@ class DebuggerApp(DebugCore.Debugger):
         self.read_target_memory(target, 8 * 16)
 
     def _cli_cmd_p(self, _):
+        self.synchronize_kernel()
         self.single_step()
 
     def _cli_cmd_pt(self, cmd_parts):
@@ -256,8 +286,66 @@ class DebuggerApp(DebugCore.Debugger):
         if len(cmd_parts) > 1:
             self.read_msr(_convert_input_number(cmd_parts[1]))
 
-    def _on_cli_enter(self, e):
-        cmd = self._input.get().lstrip()
+    def _cli_cmd_bp(self, cmd_parts):
+        if len(cmd_parts) == 1:
+            return
+        try:
+            target = _convert_input_number(cmd_parts[1])
+            if self.set_breakpoint(target):
+                self._print_output(f'breakpoint {self._breakpoints[target][1]} set @ {hex(target)}\n')
+        except ValueError:
+            # invalid address format
+            pass
+
+    def _cli_cmd_bl(self, _):
+        self._print_output(f'\n#\taddr\tcall site\n')
+        for target, bp in self._breakpoints.items():
+            if DebugCore.breakpoint_marked_for_clear(bp):
+                continue
+            lookup = self._symbol_lookup.lookup(target)
+            self._print_output("".join([f'{bp[1]}\t{hex(target)}\t{lookup}\t',
+                                        '(enabled)' if bp[0] else '(disabled)', '\n']))
+
+    def _cli_cmd_be(self, cmd_parts):
+        if len(cmd_parts) == 1:
+            return
+        try:
+            index = _convert_input_number(cmd_parts[1])
+            self.enable_breakpoint(index)
+        except KeyError:
+            # not found
+            pass
+        except ValueError:
+            # invalid argument
+            pass
+
+    def _cli_cmd_bd(self, cmd_parts):
+        if len(cmd_parts) == 1:
+            return
+        try:
+            index = _convert_input_number(cmd_parts[1])
+            self.disable_breakpoint(index)
+        except KeyError or IndexError:
+            # not found
+            pass
+        except ValueError:
+            # invalid argument
+            pass
+
+    def _cli_cmd_bc(self, cmd_parts):
+        if len(cmd_parts) == 1:
+            return
+        try:
+            index = _convert_input_number(cmd_parts[1])
+            self.clear_breakpoint(index)
+        except KeyError:
+            # not found
+            pass
+        except ValueError:
+            # invalid argument
+            pass
+
+    def _cli_exec_cmd(self, cmd):
         if len(cmd) == 0:
             return
         cmd_parts = cmd.split()
@@ -266,10 +354,25 @@ class DebuggerApp(DebugCore.Debugger):
             # execute the command handler
             command[1](cmd_parts)
             self._cli_history.append(cmd)
-            # clear the command
-            self._input.set('')
         except KeyError:
             self._print_output(f'\nunknown command\n', 'warning')
+        finally:
+            # always clear the command
+            self._input.set('')
+
+    def _on_cli_enter(self, _):
+        cmd = self._input.get().lstrip()
+        self._cli_exec_cmd(cmd)
+
+    def _on_cli_up(self, _):
+        self._cli_history_pos = (self._cli_history_pos - 1) % len(self._cli_history)
+        cmd = self._cli_history[self._cli_history_pos]
+        self._input.set(cmd)
+
+    def _on_cli_down(self, _):
+        self._cli_history_pos = (self._cli_history_pos + 1) % len(self._cli_history)
+        cmd = self._cli_history[self._cli_history_pos]
+        self._input.set(cmd)
 
     def run(self, pdb_path):
         self._pdb_path = pdb_path
@@ -414,6 +517,11 @@ class DebuggerApp(DebugCore.Debugger):
                 self._symbol_lookup = Lookup(self._pdb_lookup_info)
             lookup = self._symbol_lookup.lookup(self._last_bp_packet.stack.rip)
             self._print_output(f'\n>break - code @ {lookup}\n')
+            callstack = (ctypes.c_uint64 * self._last_bp_packet.call_stack_size)\
+                .from_buffer_copy(self._last_bp_callstack)
+            for entry in callstack:
+                lookup = self._symbol_lookup.lookup(entry)
+                self._print_stack(f'{hex(entry)}\t{lookup}\n')
             raw_bytes = bytearray(self._last_bp_packet.instruction)
             instr = iced_x86.Decoder(64, raw_bytes, ip=self._last_bp_packet.stack.rip).decode()
             disasm = self._asm_formatter.format(instr)

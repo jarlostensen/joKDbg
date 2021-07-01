@@ -1,8 +1,11 @@
 import ctypes
+from enum import Enum
 
 
 class InterruptStackFrame(ctypes.LittleEndianStructure):
-    """this reflects the layout of interrupt_stack_t in the kernel interrupts.c file"""
+    """
+    this reflects the layout of interrupt_stack_t in the kernel interrupts.c file
+    """
     _pack_ = 1
     _fields_ = [
         ("rdi", ctypes.c_uint64),
@@ -29,24 +32,11 @@ class InterruptStackFrame(ctypes.LittleEndianStructure):
         ("ss", ctypes.c_uint64),
     ]
 
-    def __new__(cls, sb=None):
-        if sb is not None:
-            return cls.from_buffer_copy(sb)
-        else:
-            return ctypes.BigEndianStructure.__new__(cls)
-
-    def __init__(self, sb=None):
-        pass
-
-    def dump(self):
-        print(f'rax {hex(self.rax)}\trbx {hex(self.rbx)}\trcx {hex(self.rcx)}\trdx {hex(self.rdx)}')
-        print(f'rsi {hex(self.rsi)}\trdi {hex(self.rdi)}')
-        print(f'r8 {hex(self.r8)}\tr9 {hex(self.r9)}\tr10 {hex(self.r10)}\tr11 {hex(self.r11)}')
-        print(f'r12 {hex(self.r12)}\tr13 {hex(self.r13)}\tr14 {hex(self.r14)}')
-        print(f'rip {hex(self.rip)}\trsp {hex(self.rsp)}\trflags {hex(self.rflags)}')
-
 
 class DebuggerBpPacket(ctypes.LittleEndianStructure):
+    """
+    general breakpoint (and fault) information from kernel
+    """
     _pack_ = 1
     _fields_ = [
         ('stack', InterruptStackFrame),
@@ -54,11 +44,15 @@ class DebuggerBpPacket(ctypes.LittleEndianStructure):
         ('cr0', ctypes.c_uint64),
         ('cr2', ctypes.c_uint64),
         ('cr3', ctypes.c_uint64),
-        ('cr4', ctypes.c_uint64)
+        ('cr4', ctypes.c_uint64),
+        ('call_stack_size', ctypes.c_uint16)
     ]
 
 
 class DebuggerSerialPacket(ctypes.LittleEndianStructure):
+    """
+    header for all serial packets between kernel and debugger
+    """
     _pack_ = 1
     _fields_ = [
         ('_id', ctypes.c_uint32),
@@ -67,6 +61,9 @@ class DebuggerSerialPacket(ctypes.LittleEndianStructure):
 
 
 class DebuggerReadTargetMemoryPacket(ctypes.LittleEndianStructure):
+    """
+    request for kernel to read and return length bytes of memory at address
+    """
     _pack_ = 1
     _fields_ = [
         ('_address', ctypes.c_uint64),
@@ -75,6 +72,9 @@ class DebuggerReadTargetMemoryPacket(ctypes.LittleEndianStructure):
 
 
 class DebuggerGetTaskInfoHeaderPacket(ctypes.LittleEndianStructure):
+    """
+    TODO
+    """
     _pack_ = 1
     _fields_ = [
         ('num_tasks', ctypes.c_uint32),
@@ -83,6 +83,9 @@ class DebuggerGetTaskInfoHeaderPacket(ctypes.LittleEndianStructure):
 
 
 class DebuggerTaskInfo(ctypes.LittleEndianStructure):
+    """
+    TODO
+    """
     _pack_ = 1
     _fields_ = [
         ('name', ctypes.c_char * (32+1)),
@@ -92,6 +95,9 @@ class DebuggerTaskInfo(ctypes.LittleEndianStructure):
 
 
 class DebuggerTraversePageTablePacket(ctypes.LittleEndianStructure):
+    """
+    request for kernel to traverse pagetable for address
+    """
     _pack_ = 1
     _fields_ = [
         ('address', ctypes.c_uint64)
@@ -99,6 +105,10 @@ class DebuggerTraversePageTablePacket(ctypes.LittleEndianStructure):
 
 
 class DebuggerTraversePageTableRespPacket(ctypes.LittleEndianStructure):
+    """
+    response to DebuggerTraversePageTable from kernel
+    contains page-table entries for each level of address
+    """
     _pack_ = 1
     _fields_ = [
         ('address', ctypes.c_uint64),
@@ -107,6 +117,9 @@ class DebuggerTraversePageTableRespPacket(ctypes.LittleEndianStructure):
 
 
 class DebuggerRDMSRPacket(ctypes.LittleEndianStructure):
+    """
+    request for kernel to read MSR
+    """
     _pack_ = 1
     _fields_ = [
         ('msr', ctypes.c_uint32)
@@ -114,6 +127,9 @@ class DebuggerRDMSRPacket(ctypes.LittleEndianStructure):
 
 
 class DebuggerRDMSRespPacket(ctypes.LittleEndianStructure):
+    """
+    RDMSR response packet from kernel
+    """
     _pack_ = 1
     _fields_ = [
         ('msr', ctypes.c_uint32),
@@ -121,3 +137,22 @@ class DebuggerRDMSRespPacket(ctypes.LittleEndianStructure):
         ('hi', ctypes.c_uint32)
     ]
 
+
+class BreakpointStatus(Enum):
+    BREAKPOINT_STATUS_ENABLED = 0
+    BREAKPOINT_STATUS_DISABLED = 1
+    BREAKPOINT_STATUS_CLEARED = 2
+
+
+class DebuggerBreakpointInfoPacket(ctypes.LittleEndianStructure):
+    """
+    synchronize breakpoint on kernel
+    we send a packet of one of these per bp to the kernel
+    """
+    _pack_ = 1
+    _fields_ = [
+        # target address
+        ('target', ctypes.c_uint64),
+        # enabled/disabled/clear
+        ('edc', ctypes.c_uint8)
+    ]
