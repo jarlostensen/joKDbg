@@ -150,7 +150,7 @@ class DebuggerApp(DebugCore.Debugger):
         self._commands['p'] = ('single step and step over', self._cli_cmd_p)
         self._commands['.pt'] = ('page table traverse', self._cli_cmd_pt)
         self._commands['rdmsr'] = ('read MSR', self._cli_cmd_rdmsr)
-        self._commands['bp'] = ('set breakpoint', self._cli_cmd_bp)
+        self._commands['bp'] = ('set breakpoint @ address or symbol name', self._cli_cmd_bp)
         self._commands['bl'] = ('list breakpoints', self._cli_cmd_bl)
         self._commands['be'] = ('enable breakpoint', self._cli_cmd_be)
         self._commands['bd'] = ('disable breakpoint', self._cli_cmd_bd)
