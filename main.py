@@ -297,11 +297,16 @@ class DebuggerApp(DebugCore.Debugger):
         if len(cmd_parts) == 1:
             return
         try:
-            target = _convert_input_number(cmd_parts[1])
+            if not isinstance(cmd_parts[1], str):
+                target = _convert_input_number(cmd_parts[1])
+            else:
+                symbol_info = self.lookup_by_symbol(cmd_parts[1])
+                if symbol_info is not None:
+                    target = symbol_info[2]
             if self.set_breakpoint(target):
                 self._print_output(f'breakpoint {self._breakpoints[target][1]} set @ {hex(target)}\n')
         except ValueError:
-            # invalid address format
+
             pass
 
     def _cli_cmd_bl(self, _):

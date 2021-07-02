@@ -8,6 +8,8 @@ from .debugger_commands import *
 import queue
 import threading
 
+from typing import Tuple
+
 # NOTE: https://stackoverflow.com/questions/21048073/install-python-package-from-github-using-pycharm
 
 
@@ -150,6 +152,16 @@ class Debugger:
             self._symbol_lookup = Lookup(self._pdb_lookup_info)
         return self._symbol_lookup.lookup(address)
 
+    def lookup_by_symbol(self, symbol_name) -> Tuple[str, str, int]:
+        for base, limit in self._symbol_lookup.addrs:
+            if symbol_name in self._symbol_lookup.names[base, limit]:
+                mod = self._symbol_lookup.addrs[base, limit]['name']
+                locs = self._symbol_lookup.locs[base, limit]
+                names = self._symbol_lookup.names[base, limit]
+                idx = self._symbol_lookup.names[base, limit].index(symbol_name)
+                return mod, names[idx], locs[idx]
+        return None
+
     def set_breakpoint(self, target) -> bool:
         """
         set breakpoint at address, enabled
@@ -225,15 +237,6 @@ class Debugger:
 
     def read_msr(self, msr):
         self._send_queue.put((READ_MSR, msr))
-
-    def lookup_target_by_symbol(self, symbol_name):
-        for base, limit in self._symbol_lookup.addrs:
-            if 'efi_main' in self._symbol_lookup.names[base, limit]:
-                mod = self._symbol_lookup.addrs[base, limit]['name']
-                locs = self._symbol_lookup.locs[base, limit]
-                names = self._symbol_lookup.names[base, limit]
-                idx = self._symbol_lookup.names[base, limit].index('efi_main')
-                print("%s!%s == %#x" % (mod, names[idx], locs[idx]))
 
     def update(self):
         if self._disconnected:
