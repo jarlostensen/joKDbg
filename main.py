@@ -6,8 +6,7 @@ import time
 import re
 import string
 
-# NOTE: https://stackoverflow.com/questions/21048073/install-python-package-from-github-using-pycharm
-import pdbparse
+
 import DebugCore
 
 # disassembler https://pypi.org/project/iced-x86/
@@ -138,12 +137,7 @@ class DebuggerApp(DebugCore.Debugger):
         self._cli_history = []
         self._cli_history_pos = 0
         self._asm_formatter = iced_x86.Formatter(iced_x86.FormatterSyntax.NASM)
-        self._symbol_lookup = None
-        self._pdb_path = ''
         self._target_memory_request_queue = []
-        self._pe_path = None
-        self._pe = None
-        self._image_base = 0
 
         # CLI commands and handlers
         self._commands = {'h': ('help', self._cli_cmd_help)}
@@ -172,11 +166,16 @@ class DebuggerApp(DebugCore.Debugger):
         self._trace_window.configure(state=tk.DISABLED)
         self._trace_window.see(tk.END)
 
-    def _print_stack(self, text):
+    def _on_print_callstack_entry(self, text):
         self._stack_window.configure(state=tk.NORMAL)
         self._stack_window.insert(tk.END, text)
         self._stack_window.configure(state=tk.DISABLED)
         self._stack_window.see(tk.END)
+
+    def _clear_stack(self):
+        self._stack_window.configure(state=tk.NORMAL)
+        self._stack_window.delete("1.0", "end")
+        self._stack_window.configure(state=tk.DISABLED)
 
     def _cli_disable(self):
         self._cli.configure(state=tk.DISABLED)
@@ -383,8 +382,7 @@ class DebuggerApp(DebugCore.Debugger):
         self._input.set(cmd)
 
     def run(self, pe_path, pdb_path):
-        self._pe_path = pe_path
-        self._pdb_path = pdb_path
+        self.set_paths(pe_path, pdb_path)
         try:
             self.pipe_connect(r'\\.\pipe\josxDbg')
             while True:
@@ -447,12 +445,12 @@ class DebuggerApp(DebugCore.Debugger):
                     elif instr.op0_register == iced_x86.Register.RDI:
                         call_target = self._last_bp_packet.stack.rdi
                 if call_target != 0:
-                    lookup = self._symbol_lookup.lookup(call_target)
+                    lookup = self.lookup_symbol_at_address(call_target)
                     disasm = disasm + ' ==> ' + lookup
         self._print_output(f'{instr.ip:016x} {bytes_str:30} {disasm}\n')
 
     def _disassemble_bytes_impl(self, raw_bytes, at):
-        lookup = self._symbol_lookup.lookup(at)
+        lookup = self.lookup_symbol_at_address(at)
         self._print_output(f'\n{lookup}:\n')
         decoder = iced_x86.Decoder(64, raw_bytes, ip=at)
         line = 0
@@ -467,10 +465,7 @@ class DebuggerApp(DebugCore.Debugger):
 
     def _on_connect_impl(self, kernel_info_json):
         image_info = kernel_info_json['image_info']
-        from pdbparse.symlookup import Lookup
-        self._image_base = image_info['base']
         entry_point = image_info['entry_point']
-        self._pdb_lookup_info = [(self._pdb_path, self._image_base)]
         version_str = str(kernel_info_json['version']['major']) + \
                       '.' + \
                       str(kernel_info_json['version']['minor']) + \
@@ -519,37 +514,17 @@ class DebuggerApp(DebugCore.Debugger):
             f'{bp_packet.cr4:08x}\n')
         self._print_output('\n')
 
-    def _process_callstack(self, callstack):
-        """
-        look up the instruction bytes at the callstack entries from the kernel executable to check if
-        the preceeding instruction is a call. If it is then the location is probably part of the callstack
-        """
-        if self._pe is None:
-            import pefile
-            self._pe = pefile.PE(self._pe_path, fast_load=True)
-        text_section = self._pe.sections[0]
-        for entry in callstack:
-            rva = (entry - self._image_base) + (text_section.VirtualAddress - text_section.PointerToRawData)
-            offset = self._pe.get_offset_from_rva(rva)
-            # this is basic but effective; a call instruction can be two or three bytes long
-            instruction_bytes = self._pe.get_memory_mapped_image()[offset-3:offset]
-            if instruction_bytes[0] == 0xff or instruction_bytes[1] == 0xff:
-                lookup = self._symbol_lookup.lookup(entry)
-                self._print_stack(f'{hex(entry)}\t{lookup}\n')
-
     def _on_breakpoint(self):
         try:
-            if self._symbol_lookup is None:
-                from pdbparse.symlookup import Lookup
-                self._symbol_lookup = Lookup(self._pdb_lookup_info)
-            lookup = self._symbol_lookup.lookup(self._last_bp_packet.stack.rip)
+            lookup = self.lookup_symbol_at_address(self._last_bp_packet.stack.rip)
             self._print_output(f'\n>break - code @ {lookup}\n')
+            self._clear_stack()
 
             if self._last_bp_packet.call_stack_size > 0:
                 callstack = (ctypes.c_uint64 * self._last_bp_packet.call_stack_size)\
                     .from_buffer_copy(self._last_bp_callstack)
-                self._print_stack(f'{hex(self._last_bp_packet.stack.rip)}\t{lookup}\n')
-                self._process_callstack(callstack)
+                self._on_print_callstack_entry(f'{hex(self._last_bp_packet.stack.rip)}\t{lookup}\n')
+                self.process_callstack(callstack)
 
             raw_bytes = bytearray(self._last_bp_packet.instruction)
             instr = iced_x86.Decoder(64, raw_bytes, ip=self._last_bp_packet.stack.rip).decode()
@@ -561,12 +536,8 @@ class DebuggerApp(DebugCore.Debugger):
         except Exception as e:
             print(str(e))
 
-    # TODO hook this up
     def _on_pf(self):
-        if self._symbol_lookup is None:
-            from pdbparse.symlookup import Lookup
-            self._symbol_lookup = Lookup(self._pdb_lookup_info)
-        lookup = self._symbol_lookup.lookup(self._last_bp_packet.stack.rip)
+        lookup = self.lookup_symbol_at_address(self._last_bp_packet.stack.rip)
         error_code = self._last_bp_packet.stack.error_code
         cr2 = self._last_bp_packet.cr2
         p = 'page level protection' if (error_code & (1 << 0)) else 'page not-present'
@@ -590,10 +561,7 @@ class DebuggerApp(DebugCore.Debugger):
         * Using WRMSR to write a read-only MSR.
         * Any long-mode consistency-check violation.
         """
-        if self._symbol_lookup is None:
-            from pdbparse.symlookup import Lookup
-            self._symbol_lookup = Lookup(self._pdb_lookup_info)
-        lookup = self._symbol_lookup.lookup(self._last_bp_packet.stack.rip)
+        lookup = self.lookup_symbol_at_address(self._last_bp_packet.stack.rip)
         error_code = self._last_bp_packet.stack.error_code
         self._print_output(f'\n>GENERAL PROTECTION FAULT - code @ {lookup}, error code {hex(error_code)}')
         # allow input
@@ -603,13 +571,6 @@ class DebuggerApp(DebugCore.Debugger):
         while not trace_queue.empty():
             self._print_trace(f'\n{trace_queue.get_nowait()}')
         trace_queue.task_done()
-
-
-def test_pe_load():
-    import pefile
-    pe = pefile.PE(f'e:/dev/osdev/josx64/build/bootx64.efi', fast_load=True)
-    for section in pe.sections:
-        print(f'{str(section.Name)}, {hex(section.VirtualAddress)}, {hex(section.Misc_VirtualSize)}, {section.SizeOfRawData}')
 
 
 if __name__ == '__main__':

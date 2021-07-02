@@ -8,6 +8,8 @@ from .debugger_commands import *
 import queue
 import threading
 
+# NOTE: https://stackoverflow.com/questions/21048073/install-python-package-from-github-using-pycharm
+
 
 def breakpoint_marked_for_clear(bp):
     return bp[2]
@@ -33,6 +35,12 @@ class Debugger:
         self._breakpoints = {}
         # we keep track of changes so we know if we need to synchronise bps with the kernel
         self._breakpoints_dirty = False
+        self._symbol_lookup = None
+        self._pdb_path = ''
+        self._pe_path = None
+        self._pe = None
+        self._image_base = 0
+        self._pdb_lookup_info = None
 
     def _rw_thread_func(self):
         try:
@@ -82,12 +90,19 @@ class Debugger:
             print("rw_thread exception: " + str(e))
             self._disconnected = True
 
+    def set_paths(self, pe_path, pdb_path):
+        self._pe_path = pe_path
+        self._pdb_path = pdb_path
+
     def pipe_connect(self, pipe_name):
         self._conn = debugger_serial_pipe_connection_factory()
         self._conn.connect(pipe_name)
         self._disconnected = False
         self._rw_thread = threading.Thread(target=self._rw_thread_func, daemon=True)
         self._rw_thread.start()
+        image_info = self._conn.kernel_connection_info()['image_info']
+        self._image_base = image_info['base']
+        self._pdb_lookup_info = [(self._pdb_path, self._image_base)]
         self._on_connect_impl(self._conn.kernel_connection_info())
 
     def synchronize_kernel(self):
@@ -110,6 +125,30 @@ class Debugger:
 
     def state_is_break(self):
         return self._state == self._STATE_BREAK
+
+    def process_callstack(self, callstack):
+        """
+        look up the instruction bytes at the callstack entries from the kernel executable to check if
+        the preceeding instruction is a call. If it is then the location is probably part of the callstack
+        """
+        if self._pe is None:
+            import pefile
+            self._pe = pefile.PE(self._pe_path, fast_load=True)
+        text_section = self._pe.sections[0]
+        for entry in callstack:
+            rva = (entry - self._image_base) + (text_section.VirtualAddress - text_section.PointerToRawData)
+            offset = self._pe.get_offset_from_rva(rva)
+            # this is basic but effective; a call instruction can be two or three bytes long
+            instruction_bytes = self._pe.get_memory_mapped_image()[offset - 3:offset]
+            if instruction_bytes[0] == 0xff or instruction_bytes[1] == 0xff:
+                lookup = self._symbol_lookup.lookup(entry)
+                self._on_print_callstack_entry(f'{hex(entry)}\t{lookup}\n')
+
+    def lookup_symbol_at_address(self, address):
+        if self._symbol_lookup is None:
+            from pdbparse.symlookup import Lookup
+            self._symbol_lookup = Lookup(self._pdb_lookup_info)
+        return self._symbol_lookup.lookup(address)
 
     def set_breakpoint(self, target) -> bool:
         """
@@ -187,6 +226,15 @@ class Debugger:
     def read_msr(self, msr):
         self._send_queue.put((READ_MSR, msr))
 
+    def lookup_target_by_symbol(self, symbol_name):
+        for base, limit in self._symbol_lookup.addrs:
+            if 'efi_main' in self._symbol_lookup.names[base, limit]:
+                mod = self._symbol_lookup.addrs[base, limit]['name']
+                locs = self._symbol_lookup.locs[base, limit]
+                names = self._symbol_lookup.names[base, limit]
+                idx = self._symbol_lookup.names[base, limit].index('efi_main')
+                print("%s!%s == %#x" % (mod, names[idx], locs[idx]))
+
     def update(self):
         if self._disconnected:
             raise Exception("debugger disconnected")
@@ -206,6 +254,11 @@ class Debugger:
                     self._last_bp_packet = DebuggerBpPacket.from_buffer_copy(packet)
                     self._state = self._STATE_GPF
                     self._on_gpf()
+                    self._state = self._STATE_BREAK
+                elif packet_id == PF:
+                    self._last_bp_packet = DebuggerBpPacket.from_buffer_copy(packet)
+                    self._state = self._STATE_GPF
+                    self._on_pf()
                     self._state = self._STATE_BREAK
                 elif packet_id == UD:
                     self._last_bp_packet = DebuggerBpPacket.from_buffer_copy(packet)
