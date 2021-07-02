@@ -46,6 +46,9 @@ class DebuggerSerialConnection:
     def send_kernel_continue(self):
         self._send_kernel_packet(CONTINUE)
 
+    def send_kernel_trace_step(self):
+        self._send_kernel_packet(TRACE_STEP)
+
     def send_kernel_single_step(self):
         self._send_kernel_packet(SINGLE_STEP)
 

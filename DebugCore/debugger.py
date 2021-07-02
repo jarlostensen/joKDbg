@@ -59,6 +59,8 @@ class Debugger:
                     # TODO: rewrite all of these to use a map of handlers
                     if packet_id == CONTINUE:
                         self._conn.send_kernel_continue()
+                    elif packet_id == TRACE_STEP:
+                        self._conn.send_kernel_trace_step()
                     elif packet_id == SINGLE_STEP:
                         self._conn.send_kernel_single_step()
                     elif packet_id == READ_TARGET_MEMORY:
@@ -161,6 +163,13 @@ class Debugger:
     def continue_execution(self):
         if self._state == self._STATE_BREAK:
             self._send_queue.put((CONTINUE, 0))
+            self._state == self._STATE_WAITING
+        else:
+            raise Exception("not in breakpoint")
+
+    def trace_step(self):
+        if self._state == self._STATE_BREAK:
+            self._send_queue.put((TRACE_STEP, 0))
             self._state == self._STATE_WAITING
         else:
             raise Exception("not in breakpoint")

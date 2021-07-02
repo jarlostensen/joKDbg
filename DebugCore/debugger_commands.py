@@ -35,9 +35,9 @@ GET_TASK_LIST = 7
 """
 [->kernel] request active task list
 """
-SINGLE_STEP = 8
+TRACE_STEP = 8
 """
-[->kernel] execute next instruction then break
+[->kernel] execute next instruction 
 """
 TRAVERSE_PAGE_TABLE = 9
 """
@@ -62,6 +62,10 @@ UPDATE_BREAKPOINTS = 13
 BREAKPOINT_CALLSTACK = 14
 """
 a number of 8 byte callstack entries
+"""
+SINGLE_STEP = 15
+"""
+execute next instruction and enter subroutines
 """
 
 READ_TARGET_MEMORY_RESP = READ_TARGET_MEMORY + RESP_PACKET_MASK

@@ -152,7 +152,8 @@ class DebuggerApp(DebugCore.Debugger):
         self._commands['d'] = ('dump memory', self._cli_cmd_d)
         self._commands['r'] = ('dump registers', self._cli_cmd_r)
         self._commands['u'] = ('unassemble', self._cli_cmd_u)
-        self._commands['p'] = ('single step', self._cli_cmd_p)
+        self._commands['t'] = ('trace step', self._cli_cmd_t)
+        self._commands['p'] = ('single step and step over', self._cli_cmd_p)
         self._commands['.pt'] = ('page table traverse', self._cli_cmd_pt)
         self._commands['rdmsr'] = ('read MSR', self._cli_cmd_rdmsr)
         self._commands['bp'] = ('set breakpoint', self._cli_cmd_bp)
@@ -273,6 +274,10 @@ class DebuggerApp(DebugCore.Debugger):
             target = self._last_bp_packet.stack.rip
         self._target_memory_request_queue.append((self.__TM_REQUEST_DATA, target))
         self.read_target_memory(target, 8 * 16)
+
+    def _cli_cmd_t(self, _):
+        self.synchronize_kernel()
+        self.trace_step()
 
     def _cli_cmd_p(self, _):
         self.synchronize_kernel()
