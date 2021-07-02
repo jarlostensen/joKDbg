@@ -297,24 +297,21 @@ class DebuggerApp(DebugCore.Debugger):
         if len(cmd_parts) == 1:
             return
         try:
-            if not isinstance(cmd_parts[1], str):
-                target = _convert_input_number(cmd_parts[1])
-            else:
-                symbol_info = self.lookup_by_symbol(cmd_parts[1])
-                if symbol_info is not None:
-                    target = symbol_info[2]
+            target = _convert_input_number(cmd_parts[1])
+        except ValueError:
+            symbol_info = self.lookup_by_symbol(cmd_parts[1])
+            if symbol_info is not None:
+                target = symbol_info[2]
+        finally:
             if self.set_breakpoint(target):
                 self._print_output(f'breakpoint {self._breakpoints[target][1]} set @ {hex(target)}\n')
-        except ValueError:
-
-            pass
 
     def _cli_cmd_bl(self, _):
         self._print_output(f'\n#\taddr\tcall site\n')
         for target, bp in self._breakpoints.items():
             if DebugCore.breakpoint_marked_for_clear(bp):
                 continue
-            lookup = self._symbol_lookup.lookup(target)
+            lookup = self.lookup_symbol_at_address(target)
             self._print_output("".join([f'{bp[1]}\t{hex(target)}\t{lookup}\t',
                                         '(enabled)' if bp[0] else '(disabled)', '\n']))
 
