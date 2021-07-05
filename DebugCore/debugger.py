@@ -42,6 +42,8 @@ class Debugger:
         self._pe_path = None
         self._pe = None
         self._image_base = 0
+        self._txt_section = None
+        self._data_section = None
 
     def _rw_thread_func(self):
         try:
@@ -146,6 +148,14 @@ class Debugger:
             if instruction_bytes[0] == 0xff or instruction_bytes[1] == 0xff:
                 lookup = self._pdb.lookup_symbol_at_address(entry)
                 self._on_print_callstack_entry(f'{hex(entry)}\t{lookup}\n')
+
+    def rva_to_phys(self, rva, section_idx):
+        if self._pe is None:
+            import pefile
+            self._pe = pefile.PE(self._pe_path, fast_load=True)
+        section = self._pe.sections[section_idx]
+        phys = self._image_base + (rva + section.VirtualAddress)
+        return phys
 
     def set_breakpoint(self, target) -> bool:
         """

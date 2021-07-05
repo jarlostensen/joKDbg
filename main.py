@@ -155,6 +155,7 @@ class DebuggerApp(DebugCore.Debugger):
         self._commands['be'] = ('enable breakpoint', self._cli_cmd_be)
         self._commands['bd'] = ('disable breakpoint', self._cli_cmd_bd)
         self._commands['bc'] = ('clear breakpoint', self._cli_cmd_bc)
+        self._commands['ds'] = ('dump structure', self._cli_cmd_ds)
 
     def _print_output(self, text, tag=None):
         self._output_window.insert(tk.END, text, tag)
@@ -184,15 +185,9 @@ class DebuggerApp(DebugCore.Debugger):
         self._cli.configure(state=tk.NORMAL)
         self._input.set('')
 
-    __TM_REQUEST_CODE = 1
-    __TM_REQUEST_DATA = 2
-
     def _on_target_memory_read(self, packet):
-        request, at = self._target_memory_request_queue.pop()
-        if request == self.__TM_REQUEST_CODE:
-            self._disassemble_bytes_impl(packet, at)
-        else:
-            self._dump_memory_bytes(packet, at)
+        at, handler, extradata = self._target_memory_request_queue.pop()
+        handler(packet, at, extradata)
 
     def _on_assert(self, json_data):
         import json
@@ -263,7 +258,7 @@ class DebuggerApp(DebugCore.Debugger):
         target = self._last_bp_packet.stack.rip
         if len(cmd_parts) > 1:
             target = _convert_input_number(cmd_parts[1])
-        self._target_memory_request_queue.append((self.__TM_REQUEST_CODE, target))
+        self._target_memory_request_queue.append((target, self._disassemble_bytes_impl, None))
         self.read_target_memory(target, 52)
 
     def _cli_cmd_d(self, cmd_parts):
@@ -271,7 +266,7 @@ class DebuggerApp(DebugCore.Debugger):
             target = _convert_input_number(cmd_parts[1])
         else:
             target = self._last_bp_packet.stack.rip
-        self._target_memory_request_queue.append((self.__TM_REQUEST_DATA, target))
+        self._target_memory_request_queue.append((target, self._dump_memory_bytes, None))
         self.read_target_memory(target, 8 * 16)
 
     def _cli_cmd_t(self, _):
@@ -293,6 +288,28 @@ class DebuggerApp(DebugCore.Debugger):
         if len(cmd_parts) > 1:
             self.read_msr(_convert_input_number(cmd_parts[1]))
 
+    def _cli_cmd_ds(self, cmd_parts):
+        if len(cmd_parts) > 1:
+            # TODO for now the argument has to be a variable name
+            try:
+                var_info = self._pdb.get_variable_declaration(cmd_parts[1])
+                if var_info is None:
+                    self._print_output(f'{cmd_parts[1]} is not found in PDB\n')
+                    return
+                if var_info[1] != 'LF_STRUCTURE':
+                    self._print_output(f'{cmd_parts[1]} is not a structure\n')
+                    return
+                struct_info = self._pdb.get_structure_info(var_info[0])
+                packed_size = 0
+                for field in struct_info:
+                    packed_size = packed_size + field[2]
+                target = self.rva_to_phys(var_info[2].offset, var_info[2].segment - 1)
+                self._target_memory_request_queue.append((target, self._dump_structure,
+                                                          (cmd_parts[1], var_info, struct_info)))
+                self.read_target_memory(target, packed_size)
+            except Exception as e:
+                self._print_output(str(e))
+
     def _cli_cmd_bp(self, cmd_parts):
         if len(cmd_parts) == 1:
             return
@@ -300,7 +317,7 @@ class DebuggerApp(DebugCore.Debugger):
         try:
             target = _convert_input_number(cmd_parts[1])
         except ValueError:
-            symbol_info = self.lookup_by_symbol(cmd_parts[1])
+            symbol_info = self._pdb.lookup_by_symbol(cmd_parts[1])
             if symbol_info is not None:
                 target = symbol_info[2]
         finally:
@@ -375,11 +392,15 @@ class DebuggerApp(DebugCore.Debugger):
         self._cli_exec_cmd(cmd)
 
     def _on_cli_up(self, _):
+        if len(self._cli_history) == 0:
+            return
         self._cli_history_pos = (self._cli_history_pos - 1) % len(self._cli_history)
         cmd = self._cli_history[self._cli_history_pos]
         self._input.set(cmd)
 
     def _on_cli_down(self, _):
+        if len(self._cli_history) == 0:
+            return
         self._cli_history_pos = (self._cli_history_pos + 1) % len(self._cli_history)
         cmd = self._cli_history[self._cli_history_pos]
         self._input.set(cmd)
@@ -395,7 +416,33 @@ class DebuggerApp(DebugCore.Debugger):
         except Exception as e:
             print(f'disconnecting : {str(e)}')
 
-    def _dump_memory_bytes(self, raw_bytes, at):
+    def _dump_structure(self, raw_bytes, at, extra_data):
+        var_name = extra_data[0]
+        var_info = extra_data[1]
+        struct_info = extra_data[2]
+        phys = self.rva_to_phys(var_info[2].offset, var_info[2].segment - 1)
+        self._print_output(f'\n{var_info[0]} {var_name} @ {hex(phys)} (rva {hex(var_info[2].offset)})\n')
+        offset = 0
+        for field in struct_info:
+            # TODO for now...
+            if field[2] == 8:
+                val = ctypes.c_uint64.from_buffer_copy(raw_bytes[offset:offset + 8])
+                self._print_output(f'\t{field[0]}\t{hex(val.value)};\n')
+            elif field[2] == 4:
+                val = ctypes.c_uint32.from_buffer_copy(raw_bytes[offset:offset + 4])
+                self._print_output(f'\t{field[0]}\t{hex(val.value)};\n')
+            elif field[2] == 2:
+                val = ctypes.c_uint16.from_buffer_copy(raw_bytes[offset:offset + 2])
+                self._print_output(f'\t{field[0]}\t{hex(val.value)};\n')
+            elif field[2] == 1:
+                val = ctypes.c_uint8.from_buffer_copy(raw_bytes[offset:offset + 1])
+                self._print_output(f'\t{field[0]}\t{hex(val.value)};\n')
+            else:
+                self._print_output(f'\t{field[0]}\tUNKNOWN TYPE;\n')
+                return
+            offset = offset + field[2]
+
+    def _dump_memory_bytes(self, raw_bytes, at, _):
         self._print_output('\n')
         runs = len(raw_bytes) // 16
         i = 0
@@ -452,7 +499,7 @@ class DebuggerApp(DebugCore.Debugger):
                     disasm = disasm + ' ==> ' + lookup
         self._print_output(f'{instr.ip:016x} {bytes_str:30} {disasm}\n')
 
-    def _disassemble_bytes_impl(self, raw_bytes, at):
+    def _disassemble_bytes_impl(self, raw_bytes, at, _):
         lookup = self._pdb.lookup_symbol_at_address(at)
         self._print_output(f'\n{lookup}:\n')
         decoder = iced_x86.Decoder(64, raw_bytes, ip=at)

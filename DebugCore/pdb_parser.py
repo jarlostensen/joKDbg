@@ -5,23 +5,36 @@ from os import path
 def _tpi_type_size(type_name: str) -> int:
     # TODO: LUT, not IF...
     # based on information in pdbparse/tpi.py
+    count = 1
+    if '[' in type_name:
+        parts = type_name.split(sep='[')
+        count = int(parts[1][:-1], 10)
+        type_name = parts[0]
     if type_name == 'T_INT1' or \
             type_name == 'T_UINT1' or \
-            type_name == 'T_RCHAR':
-        return 1
+            type_name == 'T_RCHAR' or \
+            type_name == 'T_UCHAR':
+        return 1*count
     if type_name.startswith('T_P') or \
             type_name == 'T_SHORT' or \
+            type_name == 'T_USHORT' or \
             type_name == 'T_INT2' or \
             type_name == 'T_UINT2':
-        return 2
+        return 2*count
     if type_name.startswith('T_32') or \
             type_name == 'T_LONG' or \
             type_name == 'T_ULONG' or \
-            type_name == 'T_UINT4':
-        return 4
+            type_name == 'T_UINT4' or \
+            type_name == 'T_INT4':
+        return 4*count
     if type_name.startswith('T_64') or \
             type_name == 'T_INT8' or \
-            type_name == 'T_UINT8':
+            type_name == 'T_UINT8' or \
+            type_name == 'T_QUAD' or \
+            type_name == 'T_UQUAD':
+        return 8*count
+    # SPECIAL case
+    if type_name.endswith('*'):
         return 8
     raise Exception(f'unsupported type {type_name}')
 
@@ -36,6 +49,8 @@ def _get_type_name(tp):
     # a pointer to a known type
     if tp.leaf_type == "LF_POINTER":
         return _get_type_name(tp.utype) + "*"
+    if tp.leaf_type == "LF_ENUM":
+        return _get_type_name(tp.utype)
     # handling 'const', 'volatile', and 'unaligned' modifiers
     if tp.leaf_type == "LF_MODIFIER":
         s = [mod for mod in ['const', 'volatile', 'unaligned'] \
@@ -62,7 +77,6 @@ class PdbParser:
 
     see for example https://auscitte.github.io/systems%20blog/Func-Prototypes-With-Pdbparse
     """
-
     def __init__(self):
         self._pdb = None
         self._symbol_lookup = None
@@ -201,7 +215,8 @@ class PdbParser:
             raise IndexError(f"{sname} not found in PDB or not LF_STRUCTURE")
         struct_info = []
         for f in self._pdb.STREAM_TPI.types[tps[0]].fieldlist.substructs:
-            struct_info.append((f.name, _get_type_name(f.index)))
+            type_name = _get_type_name(f.index)
+            struct_info.append((f.name, type_name, _tpi_type_size(type_name)))
         self._struct_cache[sname] = struct_info
         return struct_info
 
@@ -217,7 +232,9 @@ class PdbParser:
         for s in self._pdb.STREAM_GSYM.globals:
             if "name" in s and s.name == vname:
                 if "typind" in s:
-                    self._var_cache[vname] = (_get_type_name(self._pdb.STREAM_TPI.types[s.typind]), s)
+                    self._var_cache[vname] = (_get_type_name(self._pdb.STREAM_TPI.types[s.typind]),
+                                              self._pdb.STREAM_TPI.types[s.typind].leaf_type,
+                                              s)
                     return self._var_cache[vname]
         return None
 
@@ -228,7 +245,7 @@ class PdbParser:
     def dump_variable_declaration(self, vname):
         s = self.get_variable_declaration(vname)
         if s is not None:
-            print(s[0], " ", vname, "; // @ RVA ", hex(s[1].offset), sep="")
+            print(s[0], " ", vname, "; // @ RVA ", hex(s[2].offset), sep="")
         else:
             print(f'{vname} not found')
 
