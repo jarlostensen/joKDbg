@@ -1,4 +1,7 @@
 # joKDbg - Work In Progress
+
+![screenshot](Documentation/assets/debugger_2.PNG)
+
 A basic serial debugger for my kernel projects.<br/>
 
 I have decided to write my kernel on Windows which limits the available support for debugging so I've decided to try to write my own.
