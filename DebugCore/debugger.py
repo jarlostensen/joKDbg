@@ -4,6 +4,7 @@ import time
 from .debugger_serial_connection import debugger_serial_pipe_connection_factory
 from .debugger_packets import *
 from .debugger_commands import *
+from .pdb_parser import PdbParser
 
 import queue
 import threading
@@ -37,12 +38,10 @@ class Debugger:
         self._breakpoints = {}
         # we keep track of changes so we know if we need to synchronise bps with the kernel
         self._breakpoints_dirty = False
-        self._symbol_lookup = None
-        self._pdb_path = ''
+        self._pdb = PdbParser()
         self._pe_path = None
         self._pe = None
         self._image_base = 0
-        self._pdb_lookup_info = None
 
     def _rw_thread_func(self):
         try:
@@ -104,7 +103,7 @@ class Debugger:
         self._rw_thread.start()
         image_info = self._conn.kernel_connection_info()['image_info']
         self._image_base = image_info['base']
-        self._pdb_lookup_info = [(self._pdb_path, self._image_base)]
+        self._pdb.load(self._image_base, self._pdb_path)
         self._on_connect_impl(self._conn.kernel_connection_info())
 
     def synchronize_kernel(self):
@@ -142,25 +141,11 @@ class Debugger:
             offset = self._pe.get_offset_from_rva(rva)
             # this is basic but effective; a call instruction can be two or three bytes long
             instruction_bytes = self._pe.get_memory_mapped_image()[offset - 3:offset]
+            # TODO: attempt a proper disasm on these bytes to make sure it's not just an im which happens
+            # to have 0xff in the right place
             if instruction_bytes[0] == 0xff or instruction_bytes[1] == 0xff:
-                lookup = self._symbol_lookup.lookup(entry)
+                lookup = self._pdb.lookup_symbol_at_address(entry)
                 self._on_print_callstack_entry(f'{hex(entry)}\t{lookup}\n')
-
-    def lookup_symbol_at_address(self, address):
-        if self._symbol_lookup is None:
-            from pdbparse.symlookup import Lookup
-            self._symbol_lookup = Lookup(self._pdb_lookup_info)
-        return self._symbol_lookup.lookup(address)
-
-    def lookup_by_symbol(self, symbol_name) -> Tuple[str, str, int]:
-        for base, limit in self._symbol_lookup.addrs:
-            if symbol_name in self._symbol_lookup.names[base, limit]:
-                mod = self._symbol_lookup.addrs[base, limit]['name']
-                locs = self._symbol_lookup.locs[base, limit]
-                names = self._symbol_lookup.names[base, limit]
-                idx = self._symbol_lookup.names[base, limit].index(symbol_name)
-                return mod, names[idx], locs[idx]
-        return None
 
     def set_breakpoint(self, target) -> bool:
         """

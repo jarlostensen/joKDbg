@@ -296,6 +296,7 @@ class DebuggerApp(DebugCore.Debugger):
     def _cli_cmd_bp(self, cmd_parts):
         if len(cmd_parts) == 1:
             return
+        target = None
         try:
             target = _convert_input_number(cmd_parts[1])
         except ValueError:
@@ -303,7 +304,7 @@ class DebuggerApp(DebugCore.Debugger):
             if symbol_info is not None:
                 target = symbol_info[2]
         finally:
-            if self.set_breakpoint(target):
+            if target is not None and self.set_breakpoint(target):
                 self._print_output(f'breakpoint {self._breakpoints[target][1]} set @ {hex(target)}\n')
 
     def _cli_cmd_bl(self, _):
@@ -311,7 +312,7 @@ class DebuggerApp(DebugCore.Debugger):
         for target, bp in self._breakpoints.items():
             if DebugCore.breakpoint_marked_for_clear(bp):
                 continue
-            lookup = self.lookup_symbol_at_address(target)
+            lookup = self._pdb.lookup_symbol_at_address(target)
             self._print_output("".join([f'{bp[1]}\t{hex(target)}\t{lookup}\t',
                                         '(enabled)' if bp[0] else '(disabled)', '\n']))
 
@@ -447,12 +448,12 @@ class DebuggerApp(DebugCore.Debugger):
                     elif instr.op0_register == iced_x86.Register.RDI:
                         call_target = self._last_bp_packet.stack.rdi
                 if call_target != 0:
-                    lookup = self.lookup_symbol_at_address(call_target)
+                    lookup = self._pdb.lookup_symbol_at_address(call_target)
                     disasm = disasm + ' ==> ' + lookup
         self._print_output(f'{instr.ip:016x} {bytes_str:30} {disasm}\n')
 
     def _disassemble_bytes_impl(self, raw_bytes, at):
-        lookup = self.lookup_symbol_at_address(at)
+        lookup = self._pdb.lookup_symbol_at_address(at)
         self._print_output(f'\n{lookup}:\n')
         decoder = iced_x86.Decoder(64, raw_bytes, ip=at)
         line = 0
@@ -518,7 +519,7 @@ class DebuggerApp(DebugCore.Debugger):
 
     def _on_breakpoint(self):
         try:
-            lookup = self.lookup_symbol_at_address(self._last_bp_packet.stack.rip)
+            lookup = self._pdb.lookup_symbol_at_address(self._last_bp_packet.stack.rip)
             self._print_output(f'\n>break - code @ {lookup}\n')
             self._clear_stack()
 
@@ -539,7 +540,7 @@ class DebuggerApp(DebugCore.Debugger):
             print(str(e))
 
     def _on_pf(self):
-        lookup = self.lookup_symbol_at_address(self._last_bp_packet.stack.rip)
+        lookup = self._pdb.lookup_symbol_at_address(self._last_bp_packet.stack.rip)
         error_code = self._last_bp_packet.stack.error_code
         cr2 = self._last_bp_packet.cr2
         p = 'page level protection' if (error_code & (1 << 0)) else 'page not-present'
@@ -563,9 +564,10 @@ class DebuggerApp(DebugCore.Debugger):
         * Using WRMSR to write a read-only MSR.
         * Any long-mode consistency-check violation.
         """
-        lookup = self.lookup_symbol_at_address(self._last_bp_packet.stack.rip)
+        lookup = self._pdb.lookup_symbol_at_address(self._last_bp_packet.stack.rip)
         error_code = self._last_bp_packet.stack.error_code
-        self._print_output(f'\n>GENERAL PROTECTION FAULT - code @ {lookup}, error code {hex(error_code)}')
+        self._print_output(f'\n>GENERAL PROTECTION FAULT - code @ {hex(self._last_bp_packet.stack.rip)} : {lookup}, '
+                           f'error code {hex(error_code)}')
         # allow input
         self._cli_enable()
 
