@@ -138,6 +138,8 @@ class DebuggerApp(DebugCore.Debugger):
         self._cli_history_pos = 0
         self._asm_formatter = iced_x86.Formatter(iced_x86.FormatterSyntax.NASM)
         self._target_memory_request_queue = []
+        self._trace_log_file = open('traces.log', 'a')
+        self._trace_log_file.write(f'\nstart trace @ {time.time()}\n')
 
         # CLI commands and handlers
         self._commands = {'h': ('help', self._cli_cmd_help)}
@@ -156,6 +158,7 @@ class DebuggerApp(DebugCore.Debugger):
         self._commands['bd'] = ('disable breakpoint', self._cli_cmd_bd)
         self._commands['bc'] = ('clear breakpoint', self._cli_cmd_bc)
         self._commands['ds'] = ('dump structure', self._cli_cmd_ds)
+        self._commands['s'] = ('stack dump N levels', self._cli_cmd_s)
 
     def _print_output(self, text, tag=None):
         self._output_window.insert(tk.END, text, tag)
@@ -405,6 +408,16 @@ class DebuggerApp(DebugCore.Debugger):
         cmd = self._cli_history[self._cli_history_pos]
         self._input.set(cmd)
 
+    def _cli_cmd_s(self, cmd):
+        depth = 4
+        if len(cmd) > 1:
+            try:
+                depth = max(depth, _convert_input_number(cmd[1]))
+            except ValueError:
+                self._print_output(f'\ninvalid argument\n', 'warning')
+        self._target_memory_request_queue.append((self._last_bp_packet.stack.rsp, self._dump_stack, depth))
+        self.read_target_memory(self._last_bp_packet.stack.rsp, depth * 8)
+
     def run(self, pe_path, pdb_path):
         self.set_paths(pe_path, pdb_path)
         try:
@@ -415,6 +428,16 @@ class DebuggerApp(DebugCore.Debugger):
                 self._root.update()
         except Exception as e:
             print(f'disconnecting : {str(e)}')
+        finally:
+            self._trace_log_file.close()
+
+    def _dump_stack(self, raw_bytes, at, depth):
+        self._print_output(f'\nstack dump from {hex(at)}, {depth} levels:\n')
+        offset = 0
+        for d in range(depth):
+            self._print_output(f'{hex(at+offset)}\t'
+                               f'{hex(ctypes.c_uint64.from_buffer_copy(raw_bytes[offset:offset+8]).value)}\n')
+            offset = offset + 8
 
     def _dump_structure(self, raw_bytes, at, extra_data):
         var_name = extra_data[0]
@@ -597,7 +620,7 @@ class DebuggerApp(DebugCore.Debugger):
         instr = 'instruction fetch' if (error_code & (1 << 4)) else ''
         flags = ' '.join([p, wr, us, rsvd, instr])
         self._print_output(f'\n>PAGE FAULT - code @ {lookup}\n\t'
-                           f'@ {hex(cr2)}: {flags}')
+                           f'@ {hex(cr2)}: {flags}', 'error')
         # allow input
         self._cli_enable()
 
@@ -614,14 +637,19 @@ class DebuggerApp(DebugCore.Debugger):
         lookup = self._pdb.lookup_symbol_at_address(self._last_bp_packet.stack.rip)
         error_code = self._last_bp_packet.stack.error_code
         self._print_output(f'\n>GENERAL PROTECTION FAULT - code @ {hex(self._last_bp_packet.stack.rip)} : {lookup}, '
-                           f'error code {hex(error_code)}')
-        # allow input
-        self._cli_enable()
+                           f'error code {hex(error_code)}', 'error')
+        self._on_breakpoint()
 
     def _process_trace_queue_impl(self, trace_queue: queue.Queue):
+        lines = []
         while not trace_queue.empty():
-            self._print_trace(f'\n{trace_queue.get_nowait()}')
+            line = trace_queue.get_nowait()
+            self._print_trace(f'\n{line}')
+            lines.append(line)
         trace_queue.task_done()
+        if len(lines) > 0:
+            self._trace_log_file.writelines("\n".join(lines))
+            self._trace_log_file.write('\n')
 
 
 if __name__ == '__main__':
