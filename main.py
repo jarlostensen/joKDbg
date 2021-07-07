@@ -159,6 +159,7 @@ class DebuggerApp(DebugCore.Debugger):
         self._commands['s'] = ('stack dump N levels', self._cli_cmd_s)
         self._commands['cpuid'] = ('cpuid leaf X', self._cli_cmd_cpuid)
         self._commands['di'] = ('dump kernel info', self._cli_cmd_di)
+        self._commands['mm'] = ('dump a memory map', self._cli_cmd_mm)
 
     def _print_output(self, text, tag=None):
         self._output_window.insert(tk.END, text, tag)
@@ -277,6 +278,9 @@ class DebuggerApp(DebugCore.Debugger):
 
     def _cli_cmd_r(self, _):
         self._dump_registers(self._last_bp_packet)
+
+    def _cli_cmd_mm(self, _):
+        self.memory_map()
 
     def _cli_cmd_u(self, cmd_parts):
         target = self._last_bp_packet.stack.rip

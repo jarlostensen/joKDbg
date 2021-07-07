@@ -86,6 +86,8 @@ class Debugger:
                         self._conn.send_kernel_update_breakpoints(packet_data)
                     elif packet_id == CPUID:
                         self._conn.send_kernel_cpuid(packet_data[0], packet_data[1])
+                    elif packet_id == MEMORY_MAP:
+                        self._conn._send_kernel_packet(MEMORY_MAP)
                     else:
                         pass
         except UnicodeDecodeError:
@@ -208,8 +210,8 @@ class Debugger:
     def read_target_memory(self, at, count):
         self._send_queue.put((READ_TARGET_MEMORY, (at, count)))
 
-    def get_task_list(self):
-        self._send_queue.put(GET_TASK_LIST)
+    def memory_map(self):
+        self._send_queue.put((MEMORY_MAP, 0))
 
     def continue_execution(self):
         if self._state == self._STATE_BREAK:

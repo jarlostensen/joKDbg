@@ -75,6 +75,10 @@ CPUID = 17
 """
 execute CPUID and return eax,ebx,ecx,edx
 """
+MEMORY_MAP = 18
+"""
+dump a memory map
+"""
 
 READ_TARGET_MEMORY_RESP = READ_TARGET_MEMORY + RESP_PACKET_MASK
 GET_TASK_LIST_RESP = GET_TASK_LIST + RESP_PACKET_MASK
