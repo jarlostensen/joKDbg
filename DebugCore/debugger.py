@@ -84,6 +84,8 @@ class Debugger:
                         self._conn.send_kernel_read_msr(packet_data)
                     elif packet_id == UPDATE_BREAKPOINTS:
                         self._conn.send_kernel_update_breakpoints(packet_data)
+                    elif packet_id == CPUID:
+                        self._conn.send_kernel_cpuid(packet_data[0], packet_data[1])
                     else:
                         pass
         except UnicodeDecodeError:
@@ -166,6 +168,9 @@ class Debugger:
             self._breakpoints[target] = [True, len(self._breakpoints), False]
             self._breakpoints_dirty = True
             return True
+
+    def cpuid(self, leaf: int, subleaf: int):
+        self._send_queue.put((CPUID, (leaf, subleaf)))
 
     def get_breakpoint_from_target(self, target):
         try:
@@ -281,6 +286,8 @@ class Debugger:
                 elif packet_id == READ_MSR_RESP:
                     rdmsr = DebuggerRDMSRespPacket.from_buffer_copy(packet)
                     self._on_read_msr(rdmsr)
+                elif packet_id == CPUID_RESP:
+                    self._on_cpuid(packet)
                 elif packet_id == GET_TASK_LIST_RESP:
                     ti_hdr_packet = DebuggerGetTaskInfoHeaderPacket.from_buffer_copy(packet)
                     print(f'''GET_TASK_LIST_RESP returned {ti_hdr_packet.num_tasks} tasks of '''

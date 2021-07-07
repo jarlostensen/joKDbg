@@ -29,14 +29,12 @@ class DebuggerSerialConnection:
         packet._id = packet_id
         packet._length = packet_length
         # cast a a pointer to byte array and send raw
-        self._send_packet_impl(ctypes.cast(ctypes.byref(packet),
-                                           ctypes.POINTER(ctypes.c_char * ctypes.sizeof(packet))).contents.raw)
+        self._send_packet_impl(bytearray(packet))
 
     def _send_kernel_packet(self, packet_id, packet_data=None):
         if packet_data is not None:
             self._send_kernel_packet_header(packet_id, ctypes.sizeof(packet_data))
-            self._send_packet_impl(ctypes.cast(ctypes.byref(packet_data),
-                                               ctypes.POINTER(ctypes.c_char * ctypes.sizeof(packet_data))).contents.raw)
+            self._send_packet_impl(bytearray(packet_data))
         else:
             self._send_kernel_packet_header(packet_id, 0)
 
@@ -45,6 +43,14 @@ class DebuggerSerialConnection:
 
     def send_kernel_continue(self):
         self._send_kernel_packet(CONTINUE)
+
+    def send_kernel_cpuid(self, leaf: int, subleaf: int):
+        leaf_packet = ctypes.c_uint32 * 2
+        packet_buffer = ctypes.create_string_buffer(ctypes.sizeof(leaf_packet))
+        packet = leaf_packet.from_buffer_copy(packet_buffer)
+        packet[0] = leaf
+        packet[1] = subleaf
+        self._send_kernel_packet(CPUID, packet)
 
     def send_kernel_trace_step(self):
         self._send_kernel_packet(TRACE_STEP)

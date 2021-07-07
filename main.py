@@ -2,10 +2,7 @@
 This is a sandbox of experimental code to use and refine the DebugCore Debugger module
 """
 import ctypes
-import time
-import re
-import string
-
+from datetime import datetime
 
 import DebugCore
 
@@ -14,7 +11,7 @@ import iced_x86
 import queue
 
 import tkinter as tk
-
+import json
 
 def _convert_input_number(literal: str):
     if literal.lower().startswith('0x'):
@@ -139,7 +136,8 @@ class DebuggerApp(DebugCore.Debugger):
         self._asm_formatter = iced_x86.Formatter(iced_x86.FormatterSyntax.NASM)
         self._target_memory_request_queue = []
         self._trace_log_file = open('traces.log', 'a')
-        self._trace_log_file.write(f'\nstart trace @ {time.time()}\n')
+        self._trace_log_file.write(f'\nstart trace @ {datetime.now()}\n')
+        self._kernel_info = None
 
         # CLI commands and handlers
         self._commands = {'h': ('help', self._cli_cmd_help)}
@@ -159,6 +157,8 @@ class DebuggerApp(DebugCore.Debugger):
         self._commands['bc'] = ('clear breakpoint', self._cli_cmd_bc)
         self._commands['ds'] = ('dump structure', self._cli_cmd_ds)
         self._commands['s'] = ('stack dump N levels', self._cli_cmd_s)
+        self._commands['cpuid'] = ('cpuid leaf X', self._cli_cmd_cpuid)
+        self._commands['di'] = ('dump kernel info', self._cli_cmd_di)
 
     def _print_output(self, text, tag=None):
         self._output_window.insert(tk.END, text, tag)
@@ -200,6 +200,13 @@ class DebuggerApp(DebugCore.Debugger):
         line = assert_obj['line']
         self._print_output(f'\nASSERT:\n\t{cond}\n\tin {file} @ line {line}\n'
                            f'EXECUTION WILL NOT CONTINUE', 'assert')
+
+    def _on_cpuid(self, packet):
+        regs_type = ctypes.c_uint32 * 6
+        regs = regs_type.from_buffer_copy(packet)
+        self._print_output(f'\nCPUID : {hex(regs[0])} (ecx={hex(regs[1])})\n'
+                           f'\teax {hex(regs[2])}\tebx {hex(regs[3])}'
+                           f'\tecx {hex(regs[4])}\tedx {hex(regs[5])}\n')
 
     def _on_get_pagetable_info(self, table_info):
         self._print_output(f'\npagetable info for {hex(table_info.address)}:\n')
@@ -248,11 +255,25 @@ class DebuggerApp(DebugCore.Debugger):
         for command, info in self._commands.items():
             self._print_output(f'\t{command}\t\t\t{info[0]}\n')
 
+    def _cli_cmd_di(self, _):
+        self._print_output(json.dumps(self._kernel_info))
+
     def _cli_cmd_go(self, _):
         self._input.set(self.__DEBUGGER_NOT_CONNECTED_MSG)
         self._cli_disable()
         self.synchronize_kernel()
         self.continue_execution()
+
+    def _cli_cmd_cpuid(self, cmd_parts):
+        if len(cmd_parts) > 1:
+            try:
+                leaf = _convert_input_number(cmd_parts[1])
+                subleaf = 0
+                if len(cmd_parts) > 2:
+                    subleaf = _convert_input_number(cmd_parts[2])
+                self.cpuid(leaf, subleaf)
+            except ValueError:
+                pass
 
     def _cli_cmd_r(self, _):
         self._dump_registers(self._last_bp_packet)
@@ -435,8 +456,8 @@ class DebuggerApp(DebugCore.Debugger):
         self._print_output(f'\nstack dump from {hex(at)}, {depth} levels:\n')
         offset = 0
         for d in range(depth):
-            self._print_output(f'{hex(at+offset)}\t'
-                               f'{hex(ctypes.c_uint64.from_buffer_copy(raw_bytes[offset:offset+8]).value)}\n')
+            self._print_output(f'{hex(at + offset)}\t'
+                               f'{hex(ctypes.c_uint64.from_buffer_copy(raw_bytes[offset:offset + 8]).value)}\n')
             offset = offset + 8
 
     def _dump_structure(self, raw_bytes, at, extra_data):
@@ -537,6 +558,7 @@ class DebuggerApp(DebugCore.Debugger):
             line = line + 1
 
     def _on_connect_impl(self, kernel_info_json):
+        self._kernel_info = kernel_info_json
         image_info = kernel_info_json['image_info']
         entry_point = image_info['entry_point']
         version_str = str(kernel_info_json['version']['major']) + \
@@ -549,7 +571,14 @@ class DebuggerApp(DebugCore.Debugger):
         self._print_output('kernel reports available RAM ' +
                            str(kernel_info_json['system_info']['memory'])
                            + ', and '
-                           + str(kernel_info_json['system_info']['processors']) + ' processors\n\n')
+                           + str(kernel_info_json['system_info']['processors']) + ' processors\n')
+        self._print_output('CPU vendor string: ' + kernel_info_json['system_info']['vendor'] + '\n')
+        try:
+            hypervisor = kernel_info_json['hypervisor']
+            self._print_output('Hypervisor vendor string: ' + hypervisor['id'] + '\n')
+        except KeyError:
+            pass
+        self._print_output('\n')
 
     def _dump_registers(self, bp_packet):
         self._print_output(
@@ -594,7 +623,7 @@ class DebuggerApp(DebugCore.Debugger):
             self._clear_stack()
 
             if self._last_bp_packet.call_stack_size > 0:
-                callstack = (ctypes.c_uint64 * self._last_bp_packet.call_stack_size)\
+                callstack = (ctypes.c_uint64 * self._last_bp_packet.call_stack_size) \
                     .from_buffer_copy(self._last_bp_callstack)
                 self._on_print_callstack_entry(f'{hex(self._last_bp_packet.stack.rip)}\t{lookup}\n')
                 self.process_callstack(callstack)
