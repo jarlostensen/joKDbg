@@ -294,7 +294,8 @@ class DebuggerApp(DebugCore.Debugger):
             target = _convert_input_number(cmd_parts[1])
         else:
             target = self._last_bp_packet.stack.rip
-        self._target_memory_request_queue.append((target, self._dump_memory_bytes, None))
+        self._target_memory_request_queue.append((target, self._dump_memory_bytes,
+                                                  None if len(cmd_parts) < 3 else cmd_parts))
         self.read_target_memory(target, 8 * 16)
 
     def _cli_cmd_t(self, _):
@@ -490,14 +491,28 @@ class DebuggerApp(DebugCore.Debugger):
                 return
             offset = offset + field[2]
 
-    def _dump_memory_bytes(self, raw_bytes, at, _):
+    def _dump_memory_bytes(self, raw_bytes, at, args):
         self._print_output('\n')
         runs = len(raw_bytes) // 16
         i = 0
+        width = 1
+        steps = 1
+        if args is not None:
+            width = _convert_input_number(args[2])
+            if width > 16:
+                raise Exception("dump command unit size > 16 not supported")
+            steps = 16//width
         for j in range(runs):
             run = raw_bytes[i:i + 16]
             literal = "".join([chr(b) if 31 < b < 128 else '.' for b in run])
-            bytes_str = run.hex(' ').lower()
+            if width == 1:
+                bytes_str = run.hex(' ').lower()
+            else:
+                # TODO: optimise...
+                chunks = []
+                for s in range(steps):
+                    chunks.append(run[s*width:(s+1)*width].hex().lower())
+                bytes_str = " ".join(chunks)
             self._print_output(f'{at:016x} {bytes_str}    {literal}\n')
             i = i + 16
         rem = len(raw_bytes) % 16
